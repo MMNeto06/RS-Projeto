@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+// ============================================================
+// PROTOCOL BUFFERS (.proto)
+// ============================================================
+// Este ficheiro define a "linguagem comum" entre todos os nodes.
+// O protoc vai gerar automaticamente código Python a partir daqui.
+// No teu projeto DnD, vais ter coisas como:
+//   rpc Attack (AttackAction) returns (AttackResult);
+// ============================================================
+
+package chat;
+
+// O serviço gRPC que cada node expõe.
+// Cada node é simultaneamente servidor (recebe) e cliente (envia).
+service ChatService {
+
+  // Receber uma mensagem de outro node
+  rpc SendMessage (ChatMessage) returns (Ack);
+
+  // Pedir a lista de membros conhecidos (útil para debug)
+  rpc Ping (PingRequest) returns (PingResponse);
+}
+
+// Uma mensagem de chat
+message ChatMessage {
+  string sender    = 1;   // username de quem envia
+  string content   = 2;   // texto da mensagem
+  int64  timestamp = 3;   // unix timestamp
+  string channel   = 4;   // nome do canal (para expandir no futuro)
+}
+
+// Confirmação de receção (ACK)
+message Ack {
+  bool   received = 1;
+  string by       = 2;   // username de quem confirmou
+}
+
+// Para verificar se um node está vivo
+message PingRequest {
+  string from_user = 1;
+}
+
+message PingResponse {
+  string username = 1;
+  bool   alive    = 2;
+}

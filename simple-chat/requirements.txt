@@ -1,0 +1,4 @@
+grpcio>=1.60.0
+grpcio-tools>=1.60.0
+kademlia>=2.2.2
+aioconsole>=0.6.0
