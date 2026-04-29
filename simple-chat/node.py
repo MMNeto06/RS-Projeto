@@ -92,7 +92,7 @@ class ChatNode:
         self.grpc_port  = grpc_port
         self.kad_port   = kad_port
         self.bootstrap  = bootstrap  # (host, kad_port) do node bootstrap, ou None
-        self.kad        = KademliaNode()
+        self.kad        = KademliaNode(ksize=20, alpha=3) # IMPORTANTE!!! this is a quick fix, fiz real está nos outros importantes
         self.grpc_server = None
 
     # ── KADEMLIA ──────────────────────────────────────────────────
@@ -114,6 +114,7 @@ class ChatNode:
         if self.bootstrap:
             print(f"[DHT] A ligar ao bootstrap {self.bootstrap}...")
             await self.kad.bootstrap([self.bootstrap])
+            await asyncio.sleep(1)  # ← deixar a DHT estabilizar
             print("[DHT] Ligado à rede P2P!")
         else:
             print("[DHT] Sou o primeiro node (bootstrap).")
@@ -126,15 +127,24 @@ class ChatNode:
         JSON com todos os membros do canal:
           { "Alice": "127.0.0.1:50051", "Bob": "127.0.0.1:50052", ... }
         """
-        # Ler a lista atual (pode já ter outros membros)
-        existing = await self.kad.get(CHANNEL_KEY)
-        members = json.loads(existing) if existing else {}
+        
+        for attempt in range(3):
+            # Ler a lista atual (pode já ter outros membros)
+            existing = await self.kad.get(CHANNEL_KEY)
+            members = json.loads(existing) if existing else {}
 
-        # Adicionar-nos
-        members[self.username] = f"{self.host}:{self.grpc_port}"
+            # Adicionar-nos
+            members[self.username] = f"{self.host}:{self.grpc_port}"
 
-        # Guardar de volta na DHT
-        await self.kad.set(CHANNEL_KEY, json.dumps(members))
+            # Guardar de volta na DHT
+            await self.kad.set(CHANNEL_KEY, json.dumps(members))
+
+            #verificar se guardou bem
+            verify = await self.kad.get(CHANNEL_KEY)
+            if verify and self.username in json.loads(verify):
+                break
+            await asyncio.sleep(0.5)
+
         print(f"[DHT] Registado como '{self.username}' → {self.host}:{self.grpc_port}")
 
     async def get_members(self) -> dict:
@@ -338,12 +348,24 @@ Comandos disponíveis:
 
     # ── ARRANQUE ──────────────────────────────────────────────────
 
+
     async def run(self):
         """Arranca todos os componentes e inicia o loop."""
         await self.start_kademlia()
         await self.start_grpc_server()
         await self.register_in_dht()
+        #asyncio.create_task(self._refresh_loop())  # IMPORTANTE!! adicionar para fix robusto
         await self.input_loop()
+
+    #IMPORTANTE!! -> descomentar para fix mais robusto
+    #async def _refresh_loop(self):
+    #    """Re-anuncia a nossa presença na DHT a cada 30s."""
+    #    while True:
+    #        await asyncio.sleep(30)
+    #        try:
+    #            await self.register_in_dht()
+    #        except Exception:
+    #            pass
 
 
 # ================================================================

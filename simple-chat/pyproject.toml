@@ -1,0 +1,12 @@
+[project]
+name = "simple-chat"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aioconsole>=0.8.2",
+    "grpcio>=1.80.0",
+    "grpcio-tools>=1.80.0",
+    "kademlia>=2.2.3",
+]

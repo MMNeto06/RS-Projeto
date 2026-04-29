@@ -15,17 +15,12 @@ Sistema de mensagens P2P para aprender as ferramentas do Tema 5.
  
 ## Setup
  
-```bash
-# 0. Correr o seguinte comando para entrar no virtual environment -Miguel
-cd ./simple-chat
-source venv/bin/activate
+ 1. já deve estar, mas caso não esteja, metam tudo de requiremnts na lista dependencies em pyproject.toml ou façam uv add de cada dependência
 
-# 1. Instalar dependências
-pip install -r requirements.txt
- 
-# 2. Gerar código Python a partir do .proto -> já está feito -Miguel
-#    (só precisas de fazer isto uma vez, ou quando mudares o .proto)
-python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. chat.proto
+ 2. Gerar código Python a partir do .proto (só precisas de fazer isto uma vez, ou quando mudares o .proto) 
+    -> já deve estar feito -Miguel
+```bash
+uv run python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. chat.proto
 ```
  
 ---
@@ -34,18 +29,18 @@ python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. chat.proto
  
 **Terminal 1 — Alice (bootstrap node, primeiro a entrar):**
 ```bash
-python3 node.py --username Alice --grpc-port 50051 --kad-port 8468
+uv run node.py --username Alice --grpc-port 50051 --kad-port 8468
 ```
  
 **Terminal 2 — Bob:**
 ```bash
-python3 node.py --username Bob --grpc-port 50052 --kad-port 8469 \
+uv run node.py --username Bob --grpc-port 50052 --kad-port 8469 \
                --bootstrap-host 127.0.0.1 --bootstrap-kad-port 8468
 ```
  
 **Terminal 3 — Carlos:**
 ```bash
-python3 node.py --username Carlos --grpc-port 50053 --kad-port 8470 \
+uv run node.py --username Carlos --grpc-port 50053 --kad-port 8470 \
                --bootstrap-host 127.0.0.1 --bootstrap-kad-port 8468
 ```
  
