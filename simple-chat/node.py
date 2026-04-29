@@ -354,18 +354,17 @@ Comandos disponíveis:
         await self.start_kademlia()
         await self.start_grpc_server()
         await self.register_in_dht()
-        #asyncio.create_task(self._refresh_loop())  # IMPORTANTE!! adicionar para fix robusto
+        asyncio.create_task(self._refresh_loop())
         await self.input_loop()
 
-    #IMPORTANTE!! -> descomentar para fix mais robusto
-    #async def _refresh_loop(self):
-    #    """Re-anuncia a nossa presença na DHT a cada 30s."""
-    #    while True:
-    #        await asyncio.sleep(30)
-    #        try:
-    #            await self.register_in_dht()
-    #        except Exception:
-    #            pass
+    async def _refresh_loop(self):
+        """Re-anuncia a nossa presença na DHT a cada 30s."""
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await self.register_in_dht()
+            except Exception:
+                pass
 
 
 # ================================================================
