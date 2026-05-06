@@ -54,6 +54,9 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
 
 def addr_key(key): return f"peer:{key}:addr"
 def username_key(username): return f"username:{username}"
+def lobby_meta_key(code): return f"lobby:{code}:meta"
+def lobby_member_key(code, node_id): return f"lobby:{code}:member:{node_id}"
+def lobby_index_key(code): return f"lobby:index:{code}"
 
 
 # ================================================================
@@ -81,6 +84,8 @@ class ChatNode:
         self.kad        = KademliaNode(ksize=20, alpha=3) # IMPORTANTE!!! this is a quick fix, fiz real está nos outros importantes
         self.grpc_server = None
         self.peers = {}
+        self.current_lobby = None
+        self.lobbies = {}
 
     # ── KADEMLIA ──────────────────────────────────────────────────
 
@@ -210,6 +215,51 @@ class ChatNode:
                 return resp.alive
         except Exception:
             return False
+    async def create_lobby(self, name: str, max_players: int):
+        code = "asdadsasd"
+        
+        owner_id = self.kad.node.id.hex()
+        
+        lobby_meta = {
+            "code": code,
+            "name": name,
+            "owner": owner_id,
+            "max_players": max_players,
+            "status": "open",
+            "created_at": time.time(),
+        }
+
+        member_info = {
+            "node_id": owner_id,
+            "username": self.username,
+            "ready": False,
+            "joined_at": time.time(),
+        }
+        
+        await self.kad.set(lobby_meta_key(code), json.dumps(lobby_meta))
+        await self.kad.set(lobby_member_key(code, owner_id), json.dumps(member_info))
+        await self.kad.set(lobby_index_key(code), "1")
+        
+        self.current_lobby = code
+        
+    async def join_lobby(self, lobby_code):        
+        node_id = self.kad.node.id.hex()
+        
+        lobby_meta =  await self.kad.get(lobby_meta_key(lobby_code))
+
+        member_info = {
+            "node_id": owner_id,
+            "username": self.username,
+            "ready": False,
+            "joined_at": time.time(),
+        }
+        
+        await self.kad.set(lobby_meta_key(code), json.dumps(lobby_meta))
+        await self.kad.set(lobby_member_key(code, owner_id), json.dumps(member_info))
+        await self.kad.set(lobby_index_key(code), "1")
+        
+        self.current_lobby = code
+
 
     # ── COMANDOS DO TERMINAL ──────────────────────────────────────
 
@@ -239,14 +289,43 @@ class ChatNode:
         elif cmd == "/help":
             print("""
 Comandos disponíveis:
-  /members        → lista todos os membros do canal
-  /ping <user>    → verifica se um utilizador está online
-  /help           → mostra esta ajuda
-  /quit ou /exit  → sair
+  /members        -> lista todos os membros do canal
+  /ping <user>    -> verifica se um utilizador está online
+  /help           -> mostra esta ajuda
+  /quit ou /exit  -> sair
+  /lobby create <name> <maxPlayers>  -> creates a lobby
+  /lobby list       -> lists lobbies
+  /lobby join <Code>        -> allows you to join a certain lobby
+  /lobby leave  -> lets you leave the lobby
+  /lobby start -> starts lobby, owner only
+  /ready -> announces you are ready to the lobby
+  /unready -> removes ready from lobby
 """)
         elif cmd in ("/quit", "/exit"):
             return None  # sinal para sair
-
+        elif cmd == "/lobby create" and len(parts) >= 3:
+            lobby_name = parts[2]
+            max_players_input = parts[3]
+            if(max_players_input>0 and max_players_input<16):
+                max_players = max_players_input
+            else:
+                max_players=8
+            
+            self.create_lobby(lobby_name, max_players)  
+                   
+        elif cmd == "/lobby join" and len(parts) == 3:
+            self.join_lobby(lobby_code)        
+        elif cmd == "/lobby leave" and len(parts) == 3:
+            self.leave_lobby(lobby_code)    
+        elif cmd == "/lobby start" and len(parts) == 3:
+            self.start_lobby(lobby_code) 
+        elif cmd == "/ready" and len(parts) == 3:
+            self.ready(lobby_code)    
+        elif cmd == "/unready" and len(parts) == 3:
+            self.unready(lobby_code)                
+                       
+        
+       
         else:
             print(f"[!] Comando desconhecido: {cmd}. Usa /help para ver os comandos.")
 
