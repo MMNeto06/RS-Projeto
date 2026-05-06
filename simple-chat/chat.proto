@@ -37,6 +37,8 @@ message ChatMessage {
   string content   = 2;   // texto da mensagem
   int64  timestamp = 3;   // unix timestamp
   string channel   = 4;   // nome do canal (para expandir no futuro)
+  string sender_node_id = 5;
+  string sender_addr = 6;
 }
 
 // Confirmação de receção (ACK)

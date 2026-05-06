@@ -29,7 +29,9 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
         'request' é um objeto ChatMessage (definido no .proto).
         """
         ts = time.strftime("%H:%M:%S", time.localtime(request.timestamp))
-        # Limpar a linha atual do terminal e imprimir a mensagem
+        # Limpar a linha atual do terminal e imprimir a 
+        if (request.sender_node_id not in self.node.peers.keys()):
+            self.node.peers[request.sender_node_id] = {"username": request.sender, "grpc_addr": request.sender_addr, "last_seen": str(time.time())}
         print(f"\r\033[K[{ts}] \033[1m{request.sender}\033[0m: {request.content}")
         # Reimprimir o prompt
         print("> ", end="", flush=True)
@@ -153,7 +155,9 @@ class ChatNode:
             sender    = self.username,
             content   = content,
             timestamp = int(time.time()),
-            channel   = "general"
+            channel   = "general",
+            sender_node_id = self.kad.node.id.hex(),    
+            sender_addr = f"{self.host}:{self.grpc_port}"
         )
 
         # Enviar a cada peer em paralelo

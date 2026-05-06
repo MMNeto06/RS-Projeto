@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nchat.proto\x12\x04\x63hat\"R\n\x0b\x43hatMessage\x12\x0e\n\x06sender\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\x12\x11\n\ttimestamp\x18\x03 \x01(\x03\x12\x0f\n\x07\x63hannel\x18\x04 \x01(\t\"#\n\x03\x41\x63k\x12\x10\n\x08received\x18\x01 \x01(\x08\x12\n\n\x02\x62y\x18\x02 \x01(\t\" \n\x0bPingRequest\x12\x11\n\tfrom_user\x18\x01 \x01(\t\"/\n\x0cPingResponse\x12\x10\n\x08username\x18\x01 \x01(\t\x12\r\n\x05\x61live\x18\x02 \x01(\x08\"C\n\x0bJoinRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\tgrpc_addr\x18\x02 \x01(\t\x12\x0f\n\x07\x63hannel\x18\x03 \x01(\t\"\x1e\n\x0cJoinResponse\x12\x0e\n\x06joined\x18\x01 \x01(\x08\"1\n\x0cLeaveRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x0f\n\x07\x63hannel\x18\x02 \x01(\t\"\x1d\n\rLeaveResponse\x12\x0c\n\x04left\x18\x01 \x01(\x08\"!\n\x0eMembersRequest\x12\x0f\n\x07\x63hannel\x18\x01 \x01(\t\"-\n\x06Member\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\tgrpc_addr\x18\x02 \x01(\t\"0\n\x0fMembersResponse\x12\x1d\n\x07members\x18\x01 \x03(\x0b\x32\x0c.chat.Member\"\'\n\x0fPeerInfoRequest\x12\x14\n\x0c\x66rom_node_id\x18\x01 \x01(\t\"W\n\x10PeerInfoResponse\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x11\n\tgrpc_addr\x18\x03 \x01(\t\x12\r\n\x05\x61live\x18\x04 \x01(\x08\x32\xd0\x02\n\x0b\x43hatService\x12+\n\x0bSendMessage\x12\x11.chat.ChatMessage\x1a\t.chat.Ack\x12-\n\x04Ping\x12\x11.chat.PingRequest\x1a\x12.chat.PingResponse\x12\x34\n\x0bJoinChannel\x12\x11.chat.JoinRequest\x1a\x12.chat.JoinResponse\x12\x37\n\x0cLeaveChannel\x12\x12.chat.LeaveRequest\x1a\x13.chat.LeaveResponse\x12\x38\n\nGetMembers\x12\x14.chat.MembersRequest\x1a\x14.chat.MembersRequest\x12<\n\x0bGetPeerInfo\x12\x15.chat.PeerInfoRequest\x1a\x16.chat.PeerInfoResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nchat.proto\x12\x04\x63hat\"\x7f\n\x0b\x43hatMessage\x12\x0e\n\x06sender\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\x12\x11\n\ttimestamp\x18\x03 \x01(\x03\x12\x0f\n\x07\x63hannel\x18\x04 \x01(\t\x12\x16\n\x0esender_node_id\x18\x05 \x01(\t\x12\x13\n\x0bsender_addr\x18\x06 \x01(\t\"#\n\x03\x41\x63k\x12\x10\n\x08received\x18\x01 \x01(\x08\x12\n\n\x02\x62y\x18\x02 \x01(\t\" \n\x0bPingRequest\x12\x11\n\tfrom_user\x18\x01 \x01(\t\"/\n\x0cPingResponse\x12\x10\n\x08username\x18\x01 \x01(\t\x12\r\n\x05\x61live\x18\x02 \x01(\x08\"C\n\x0bJoinRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\tgrpc_addr\x18\x02 \x01(\t\x12\x0f\n\x07\x63hannel\x18\x03 \x01(\t\"\x1e\n\x0cJoinResponse\x12\x0e\n\x06joined\x18\x01 \x01(\x08\"1\n\x0cLeaveRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x0f\n\x07\x63hannel\x18\x02 \x01(\t\"\x1d\n\rLeaveResponse\x12\x0c\n\x04left\x18\x01 \x01(\x08\"!\n\x0eMembersRequest\x12\x0f\n\x07\x63hannel\x18\x01 \x01(\t\"-\n\x06Member\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\tgrpc_addr\x18\x02 \x01(\t\"0\n\x0fMembersResponse\x12\x1d\n\x07members\x18\x01 \x03(\x0b\x32\x0c.chat.Member\"\'\n\x0fPeerInfoRequest\x12\x14\n\x0c\x66rom_node_id\x18\x01 \x01(\t\"W\n\x10PeerInfoResponse\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x11\n\tgrpc_addr\x18\x03 \x01(\t\x12\r\n\x05\x61live\x18\x04 \x01(\x08\x32\xd0\x02\n\x0b\x43hatService\x12+\n\x0bSendMessage\x12\x11.chat.ChatMessage\x1a\t.chat.Ack\x12-\n\x04Ping\x12\x11.chat.PingRequest\x1a\x12.chat.PingResponse\x12\x34\n\x0bJoinChannel\x12\x11.chat.JoinRequest\x1a\x12.chat.JoinResponse\x12\x37\n\x0cLeaveChannel\x12\x12.chat.LeaveRequest\x1a\x13.chat.LeaveResponse\x12\x38\n\nGetMembers\x12\x14.chat.MembersRequest\x1a\x14.chat.MembersRequest\x12<\n\x0bGetPeerInfo\x12\x15.chat.PeerInfoRequest\x1a\x16.chat.PeerInfoResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,31 +32,31 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'chat_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_CHATMESSAGE']._serialized_start=20
-  _globals['_CHATMESSAGE']._serialized_end=102
-  _globals['_ACK']._serialized_start=104
-  _globals['_ACK']._serialized_end=139
-  _globals['_PINGREQUEST']._serialized_start=141
-  _globals['_PINGREQUEST']._serialized_end=173
-  _globals['_PINGRESPONSE']._serialized_start=175
-  _globals['_PINGRESPONSE']._serialized_end=222
-  _globals['_JOINREQUEST']._serialized_start=224
-  _globals['_JOINREQUEST']._serialized_end=291
-  _globals['_JOINRESPONSE']._serialized_start=293
-  _globals['_JOINRESPONSE']._serialized_end=323
-  _globals['_LEAVEREQUEST']._serialized_start=325
-  _globals['_LEAVEREQUEST']._serialized_end=374
-  _globals['_LEAVERESPONSE']._serialized_start=376
-  _globals['_LEAVERESPONSE']._serialized_end=405
-  _globals['_MEMBERSREQUEST']._serialized_start=407
-  _globals['_MEMBERSREQUEST']._serialized_end=440
-  _globals['_MEMBER']._serialized_start=442
-  _globals['_MEMBER']._serialized_end=487
-  _globals['_MEMBERSRESPONSE']._serialized_start=489
-  _globals['_MEMBERSRESPONSE']._serialized_end=537
-  _globals['_PEERINFOREQUEST']._serialized_start=539
-  _globals['_PEERINFOREQUEST']._serialized_end=578
-  _globals['_PEERINFORESPONSE']._serialized_start=580
-  _globals['_PEERINFORESPONSE']._serialized_end=667
-  _globals['_CHATSERVICE']._serialized_start=670
-  _globals['_CHATSERVICE']._serialized_end=1006
+  _globals['_CHATMESSAGE']._serialized_end=147
+  _globals['_ACK']._serialized_start=149
+  _globals['_ACK']._serialized_end=184
+  _globals['_PINGREQUEST']._serialized_start=186
+  _globals['_PINGREQUEST']._serialized_end=218
+  _globals['_PINGRESPONSE']._serialized_start=220
+  _globals['_PINGRESPONSE']._serialized_end=267
+  _globals['_JOINREQUEST']._serialized_start=269
+  _globals['_JOINREQUEST']._serialized_end=336
+  _globals['_JOINRESPONSE']._serialized_start=338
+  _globals['_JOINRESPONSE']._serialized_end=368
+  _globals['_LEAVEREQUEST']._serialized_start=370
+  _globals['_LEAVEREQUEST']._serialized_end=419
+  _globals['_LEAVERESPONSE']._serialized_start=421
+  _globals['_LEAVERESPONSE']._serialized_end=450
+  _globals['_MEMBERSREQUEST']._serialized_start=452
+  _globals['_MEMBERSREQUEST']._serialized_end=485
+  _globals['_MEMBER']._serialized_start=487
+  _globals['_MEMBER']._serialized_end=532
+  _globals['_MEMBERSRESPONSE']._serialized_start=534
+  _globals['_MEMBERSRESPONSE']._serialized_end=582
+  _globals['_PEERINFOREQUEST']._serialized_start=584
+  _globals['_PEERINFOREQUEST']._serialized_end=623
+  _globals['_PEERINFORESPONSE']._serialized_start=625
+  _globals['_PEERINFORESPONSE']._serialized_end=712
+  _globals['_CHATSERVICE']._serialized_start=715
+  _globals['_CHATSERVICE']._serialized_end=1051
 # @@protoc_insertion_point(module_scope)
