@@ -46,6 +46,26 @@ class ChatServiceStub(object):
                 request_serializer=chat__pb2.PingRequest.SerializeToString,
                 response_deserializer=chat__pb2.PingResponse.FromString,
                 _registered_method=True)
+        self.JoinChannel = channel.unary_unary(
+                '/chat.ChatService/JoinChannel',
+                request_serializer=chat__pb2.JoinRequest.SerializeToString,
+                response_deserializer=chat__pb2.JoinResponse.FromString,
+                _registered_method=True)
+        self.LeaveChannel = channel.unary_unary(
+                '/chat.ChatService/LeaveChannel',
+                request_serializer=chat__pb2.LeaveRequest.SerializeToString,
+                response_deserializer=chat__pb2.LeaveResponse.FromString,
+                _registered_method=True)
+        self.GetMembers = channel.unary_unary(
+                '/chat.ChatService/GetMembers',
+                request_serializer=chat__pb2.MembersRequest.SerializeToString,
+                response_deserializer=chat__pb2.MembersRequest.FromString,
+                _registered_method=True)
+        self.GetPeerInfo = channel.unary_unary(
+                '/chat.ChatService/GetPeerInfo',
+                request_serializer=chat__pb2.PeerInfoRequest.SerializeToString,
+                response_deserializer=chat__pb2.PeerInfoResponse.FromString,
+                _registered_method=True)
 
 
 class ChatServiceServicer(object):
@@ -67,6 +87,30 @@ class ChatServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def JoinChannel(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def LeaveChannel(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetMembers(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetPeerInfo(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ChatServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -79,6 +123,26 @@ def add_ChatServiceServicer_to_server(servicer, server):
                     servicer.Ping,
                     request_deserializer=chat__pb2.PingRequest.FromString,
                     response_serializer=chat__pb2.PingResponse.SerializeToString,
+            ),
+            'JoinChannel': grpc.unary_unary_rpc_method_handler(
+                    servicer.JoinChannel,
+                    request_deserializer=chat__pb2.JoinRequest.FromString,
+                    response_serializer=chat__pb2.JoinResponse.SerializeToString,
+            ),
+            'LeaveChannel': grpc.unary_unary_rpc_method_handler(
+                    servicer.LeaveChannel,
+                    request_deserializer=chat__pb2.LeaveRequest.FromString,
+                    response_serializer=chat__pb2.LeaveResponse.SerializeToString,
+            ),
+            'GetMembers': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetMembers,
+                    request_deserializer=chat__pb2.MembersRequest.FromString,
+                    response_serializer=chat__pb2.MembersRequest.SerializeToString,
+            ),
+            'GetPeerInfo': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetPeerInfo,
+                    request_deserializer=chat__pb2.PeerInfoRequest.FromString,
+                    response_serializer=chat__pb2.PeerInfoResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -137,6 +201,114 @@ class ChatService(object):
             '/chat.ChatService/Ping',
             chat__pb2.PingRequest.SerializeToString,
             chat__pb2.PingResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def JoinChannel(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/JoinChannel',
+            chat__pb2.JoinRequest.SerializeToString,
+            chat__pb2.JoinResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LeaveChannel(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/LeaveChannel',
+            chat__pb2.LeaveRequest.SerializeToString,
+            chat__pb2.LeaveResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetMembers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/GetMembers',
+            chat__pb2.MembersRequest.SerializeToString,
+            chat__pb2.MembersRequest.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetPeerInfo(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/GetPeerInfo',
+            chat__pb2.PeerInfoRequest.SerializeToString,
+            chat__pb2.PeerInfoResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -20,6 +20,15 @@ service ChatService {
 
   // Pedir a lista de membros conhecidos (útil para debug)
   rpc Ping (PingRequest) returns (PingResponse);
+
+  rpc JoinChannel (JoinRequest) returns (JoinResponse);
+
+  rpc LeaveChannel (LeaveRequest) returns (LeaveResponse);
+  
+  rpc GetMembers (MembersRequest) returns (MembersRequest);
+
+  rpc GetPeerInfo(PeerInfoRequest) returns (PeerInfoResponse);
+
 }
 
 // Uma mensagem de chat
@@ -45,3 +54,48 @@ message PingResponse {
   string username = 1;
   bool   alive    = 2;
 }
+
+message JoinRequest {
+  string username  = 1;
+  string grpc_addr = 2;
+  string channel   = 3;
+}
+
+message JoinResponse {
+  bool joined = 1;
+}
+
+message LeaveRequest {
+  string username  = 1;
+  string channel   = 2;
+}
+
+message LeaveResponse {
+  bool left = 1;
+}
+
+message MembersRequest {
+  string channel = 1;
+}
+
+message Member {
+  string username  = 1;
+  string grpc_addr = 2;
+}
+
+message MembersResponse {
+  repeated Member members = 1;
+}
+
+message PeerInfoRequest {
+  string from_node_id = 1;
+}
+
+message PeerInfoResponse {
+  string node_id = 1;
+  string username = 2;
+  string grpc_addr = 3;
+  bool alive = 4;
+}
+
+
