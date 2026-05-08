@@ -270,7 +270,7 @@ class ChatNode:
                     lobbies.append(lobby)
         
         if not lobbies:
-            print("No lobby available")
+            print("Nenhum lobby disponível")
             return
         
         print("\n[Lobbies]")
@@ -329,39 +329,49 @@ Comandos disponíveis:
   /ping <user>    -> verifica se um utilizador está online
   /help           -> mostra esta ajuda
   /quit ou /exit  -> sair
-  /lobby create <name> <maxPlayers>  -> creates a lobby
-  /lobby list       -> lists lobbies
-  /lobby join <Code>        -> allows you to join a certain lobby
-  /lobby leave  -> lets you leave the lobby
-  /lobby start -> starts lobby, owner only
-  /ready -> announces you are ready to the lobby
-  /unready -> removes ready from lobby
+  /lobby create <name> <maxPlayers>  -> cria um lobby
+  /lobby list       -> lista lobbies
+  /lobby join <Code>        -> permite entrar num dado lobby
+  /lobby leave  -> permite sair do lobby
+  /lobby start -> começa o lobby, apenas para o dono
+  /ready -> anuncia que estás pronto para o lobby começar
+  /unready -> retira o estado de pronto
 """)
         elif cmd in ("/quit", "/exit"):
             return None  # sinal para sair
-        elif cmd == "/lobby create" and len(parts) >= 3:
-            lobby_name = parts[2]
-            max_players_input = parts[3]
-            if(max_players_input>0 and max_players_input<16):
-                max_players = max_players_input
-            else:
-                max_players=8
-            
-            self.create_lobby(lobby_name, max_players)  
+        elif cmd == "/lobby":
+            lobby_method = parts[1]
+            if len(parts) < 2: 
+                print("Usa: /lobby create|join|leave|list|start")
+            elif lobby_method == "create" and len(parts) == 4: 
+                lobby_name = parts[2]
+                max_players_input = int(parts[3]) 
+                if (0 < max_players_input < 16):
+                    max_players = max_players_input
+                else:
+                    max_players=8
+                
+                self.create_lobby(lobby_name, max_players)  
                    
-        elif cmd == "/lobby join" and len(parts) == 3:
-            self.join_lobby(lobby_code)        
-        elif cmd == "/lobby leave" and len(parts) == 3:
-            self.leave_lobby(lobby_code)    
-        elif cmd == "/lobby start" and len(parts) == 3:
-            self.start_lobby(lobby_code) 
-        elif cmd == "/ready" and len(parts) == 3:
-            self.ready(lobby_code)    
-        elif cmd == "/unready" and len(parts) == 3:
-            self.unready(lobby_code)                
+            elif lobby_method == "/list": 
+                self.list_lobbies()
+
+            elif lobby_method == "/join" and len(parts) == 3:
+                lobby_code = parts[2]
+                await self.join_lobby(lobby_code)   
+
+            elif lobby_method == "leave":
+                self.leave_lobby()    
+
+            elif lobby_method == "start":
+                self.start_lobby() 
+
+            elif lobby_method == "/ready":
+                self.ready()    
+
+            elif lobby_method == "/unready":
+                self.unready()                
                        
-        
-       
         else:
             print(f"[!] Comando desconhecido: {cmd}. Usa /help para ver os comandos.")
 
