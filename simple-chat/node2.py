@@ -14,6 +14,9 @@ import chat_pb2_grpc       # gerado pelo protoc a partir do chat.proto
 import kademlia.node as kad_node
 from kademlia.utils import digest
 
+import hashlib
+
+
 # Reduzir o ruído de logs do kademlia
 logging.getLogger("kademlia").setLevel(logging.WARNING)
 
@@ -215,8 +218,22 @@ class ChatNode:
                 return resp.alive
         except Exception:
             return False
+        
+    def generate_lobby_code(self):
+        raw = f"{self.kad.node.id.hex()}{time.time()}"
+        h = hashlib.sha256(raw.encode()).hexdigest()
+        return h[:6].upper()
+    
     async def create_lobby(self, name: str, max_players: int):
-        code = "asdadsasd"
+        code = self.generate_lobby_code()
+
+        await self.kad.set(f"peer:{self.kad.node.id.hex()}:lobby", json.dumps({
+            "code": code,
+            "name": name,
+            "max_players": max_players,
+            "current_players": 1,
+            "status": "open"
+        }))
         
         owner_id = self.kad.node.id.hex()
         
@@ -241,6 +258,25 @@ class ChatNode:
         await self.kad.set(lobby_index_key(code), "1")
         
         self.current_lobby = code
+
+    async def list_lobbies(self):
+        lobbies = []
+        
+        for node_id, peer in self.peers.items():
+            raw = await self.kad.get(f"peer:{node_id}:lobby")
+            if raw:
+                lobby = json.loads(raw)
+                if lobby and lobby.get("status") == "open":
+                    lobbies.append(lobby)
+        
+        if not lobbies:
+            print("No lobby available")
+            return
+        
+        print("\n[Lobbies]")
+        for l in lobbies:
+            print(f"  • [{l['code']}] {l['name']} — {l['current_players']}/{l['max_players']} jogadores")
+        print()
         
     async def join_lobby(self, lobby_code):        
         node_id = self.kad.node.id.hex()
@@ -248,17 +284,17 @@ class ChatNode:
         lobby_meta =  await self.kad.get(lobby_meta_key(lobby_code))
 
         member_info = {
-            "node_id": owner_id,
+            "node_id": node_id,
             "username": self.username,
             "ready": False,
             "joined_at": time.time(),
         }
         
-        await self.kad.set(lobby_meta_key(code), json.dumps(lobby_meta))
-        await self.kad.set(lobby_member_key(code, owner_id), json.dumps(member_info))
-        await self.kad.set(lobby_index_key(code), "1")
+        await self.kad.set(lobby_meta_key(lobby_code), json.dumps(lobby_meta))
+        await self.kad.set(lobby_member_key(lobby_code, node_id), json.dumps(member_info))
+        await self.kad.set(lobby_index_key(lobby_code), "1")
         
-        self.current_lobby = code
+        self.current_lobby = lobby_code
 
 
     # ── COMANDOS DO TERMINAL ──────────────────────────────────────
