@@ -7,6 +7,8 @@
 - habilidades especiais não estão a funcionar, ou não fazem nada óbvio
 - tudo que está em função de turnos tem que ser em função de tempo, pois é em tempo real
 - not sure match timer is working
+-- username tem que ser todo lowercase para ser reconhecido
+-- trocar as cores das pessoas se tiverem a mesma inicial
 
 good stuff
 - is rendering
