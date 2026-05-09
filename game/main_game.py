@@ -162,7 +162,7 @@ async def run_menu(
                 )
                 for ab in current_class.abilities:
                     spell = " [magia]" if ab.is_spell else ""
-                    cd    = f"  cooldown {ab.cooldown_turns}t" if ab.cooldown_turns else "  sempre disponível"
+                    cd    = f"  cooldown {ab.cooldown_secs}t" if ab.cooldown_secs else "  sempre disponível"
                     print(f"  • {_B}{ab.name}{_R}{spell}  —  {ab.description}{_D}{cd}{_R}")
                 print()
 
