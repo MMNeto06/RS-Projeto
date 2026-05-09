@@ -2,11 +2,10 @@
 game/renderer.py
 Renderização do estado do jogo no terminal com ANSI escape codes.
 
-render_frame(state) imprime (ou devolve como string) o ecrã completo:
+render_frame(state) imprime o ecrã completo:
 
-  ┌──────── DEATHMATCH ─ 08:47 ────────┐
-  │ mapa 20×10 com jogadores           │
-  └────────────────────────────────────┘
+  ──────── DEATHMATCH ─ 08:47 ────────
+  mapa 20×10 com jogadores
   HP  ████████████░░░░  45/60   Fighter
   
   [Eventos]
@@ -15,29 +14,57 @@ render_frame(state) imprime (ou devolve como string) o ecrã completo:
   
   [Jogadores]   Alice 3K/1D   Bob 1K/2D
   
-  [Ações]  [A]tacar  [M]over  [1]Second Wind  [2]Action Surge  [Q]uit
+  [Ações]  [A]tacar  [M]over  [1]Second Wind  [Q]uit
+
+  > █                    ← cursor fica sempre aqui
+
+Estratégia de rendering sem flickering e com input sempre visível
+──────────────────────────────────────────────────────────────────
+Em vez de guardar/restaurar o cursor (que falha quando o frame
+cresceu desde o último render), fazemos:
+
+  1. Cursor para topo do ecrã  (\033[H)
+  2. Cada linha do frame seguida de  \033[K  (limpa até ao fim da linha)
+  3. Linha do prompt  "> <buffer>"  seguida de  \033[K
+  4. \033[J  — apaga tudo abaixo (remove linhas antigas)
+  5. Cursor fica exactamente no fim do texto digitado pelo utilizador.
+
+O renderer recebe `input_line` (str) que vem de InputReader.prompt_line.
 """
 
-import os
-import time
-from typing import Optional
-
-from game_state import GameState, MatchPhase, MAP_W, MAP_H, MATCH_DURATION
+import sys
+from game_state import GameState, MatchPhase, MAP_W, MAP_H
 
 # ── CORES ANSI ────────────────────────────────────────────────────
 
-RESET  = "\033[0m"
-BOLD   = "\033[1m"
-RED    = "\033[31m"
-GREEN  = "\033[32m"
-YELLOW = "\033[33m"
-CYAN   = "\033[36m"
-WHITE  = "\033[37m"
-DIM    = "\033[2m"
+RESET   = "\033[0m"
+BOLD    = "\033[1m"
+RED     = "\033[31m"
+GREEN   = "\033[32m"
+YELLOW  = "\033[33m"
+CYAN    = "\033[36m"
+WHITE   = "\033[37m"
+DIM     = "\033[2m"
+MAGENTA = "\033[35m"
+BLUE    = "\033[34m"
+
+# Paleta de cores para diferenciar jogadores remotos.
+# Excluímos RED (mortos) e CYAN (jogador local).
+_PLAYER_PALETTE = [GREEN, YELLOW, MAGENTA, BLUE, WHITE,
+                   "\033[92m", "\033[93m", "\033[95m"]
 
 
-def _clear():
-    os.system("cls" if os.name == "nt" else "clear")
+def _player_color(username: str) -> str:
+    """Cor ANSI determinística baseada no username."""
+    idx = sum(ord(c) for c in username) % len(_PLAYER_PALETTE)
+    return _PLAYER_PALETTE[idx]
+
+
+# ── CONSTANTES DE CURSOR ──────────────────────────────────────────
+
+_HOME        = "\033[H"   # cursor para linha 1, coluna 1
+_CLEAR_EOL   = "\033[K"   # apaga do cursor até ao fim da linha
+_CLEAR_BELOW = "\033[J"   # apaga do cursor até ao fim do ecrã
 
 
 # ── HP BAR ────────────────────────────────────────────────────────
@@ -45,9 +72,10 @@ def _clear():
 def render_hp_bar(current: int, maximum: int, width: int = 20) -> str:
     if maximum == 0:
         return "░" * width
-    filled = int(width * current / maximum)
-    bar_color = GREEN if current / maximum > 0.5 else (YELLOW if current / maximum > 0.25 else RED)
-    bar = bar_color + "█" * filled + DIM + "░" * (width - filled) + RESET
+    ratio  = current / maximum
+    filled = int(width * ratio)
+    color  = GREEN if ratio > 0.5 else (YELLOW if ratio > 0.25 else RED)
+    bar    = color + "█" * filled + DIM + "░" * (width - filled) + RESET
     return f"{bar}  {BOLD}{current}/{maximum}{RESET}"
 
 
@@ -55,33 +83,27 @@ def render_hp_bar(current: int, maximum: int, width: int = 20) -> str:
 
 def render_map(state: GameState) -> str:
     """
-    Gera o mapa ASCII 20×10.
-    Cada célula é 2 chars de largura para melhor legibilidade.
-    
+    Mapa ASCII 20×10.  Cada célula = 2 chars de largura.
+
     Símbolos:
-      ☺  → jogador local (vivo)
-      ✝  → jogador local (morto)
-      A-Z → outros jogadores (inicial do username)
+      ☺  → jogador local vivo      (cyan/bold)
+      ✝  → jogador local morto     (vermelho)
+      A-Z → inicial do username de outros jogadores
       ·  → célula vazia
-      #  → parede/borda
     """
-    # Grid vazio
     grid = [["· " for _ in range(MAP_W)] for _ in range(MAP_H)]
 
-    # Outros jogadores
     for p in state.others.values():
         if 0 <= p.x < MAP_W and 0 <= p.y < MAP_H:
             initial = p.username[0].upper()
-            color = GREEN if p.alive else RED
+            color = _player_color(p.username) if p.alive else RED
             grid[p.y][p.x] = f"{color}{initial} {RESET}"
 
-    # Jogador local (por cima de tudo)
     lp = state.local
     if 0 <= lp.x < MAP_W and 0 <= lp.y < MAP_H:
         symbol = f"{BOLD}{CYAN}☺ {RESET}" if lp.alive else f"{RED}✝ {RESET}"
         grid[lp.y][lp.x] = symbol
 
-    # Bordas
     border_h = "─" * (MAP_W * 2 + 2)
     lines = [f"┌{border_h}┐"]
     for row in grid:
@@ -105,43 +127,54 @@ def render_scoreboard(state: GameState) -> str:
     rows = state.scoreboard()
     parts = []
     for username, kills, deaths in rows:
-        is_local = username == state.local.username
-        color = BOLD + CYAN if is_local else WHITE
-        parts.append(f"{color}{username}{RESET} {GREEN}{kills}K{RESET}/{RED}{deaths}D{RESET}")
+        is_local = (username == state.local.username)
+        color = BOLD + CYAN if is_local else _player_color(username)
+        parts.append(
+            f"{color}{username}{RESET} "
+            f"{GREEN}{kills}K{RESET}/{RED}{deaths}D{RESET}"
+        )
     return "  ".join(parts)
 
 
-# ── AÇÕES DISPONÍVEIS ─────────────────────────────────────────────
+# ── AÇÕES ─────────────────────────────────────────────────────────
 
 def render_actions(state: GameState) -> str:
-    """Mostra as ações disponíveis e indica cooldowns em vermelho."""
     local = state.local
     lines = [f"{BOLD}[Ações]{RESET}"]
-
-    lines.append(f"  {CYAN}[A]{RESET} Atacar   {CYAN}[M]{RESET} Mover")
-
+    lines.append(f"  {CYAN}[A]{RESET} Atacar   {CYAN}[M]{RESET} Mover   {CYAN}[S]{RESET} Scoreboard")
     for i, ability in enumerate(local.dnd_class.abilities, start=1):
         ready = local.is_ability_ready(ability.name)
         color = GREEN if ready else RED
-        cd_info = "" if ready else f"  (cooldown)"
-        lines.append(f"  {color}[{i}]{RESET} {ability.name}{DIM}{cd_info}{RESET}")
-
+        cd    = "" if ready else f"{DIM}  (cooldown){RESET}"
+        lines.append(f"  {color}[{i}]{RESET} {ability.name}{cd}")
     lines.append(f"  {RED}[Q]{RESET} Sair")
     return "\n".join(lines)
 
 
 # ── FRAME COMPLETO ────────────────────────────────────────────────
 
-def render_frame(state: GameState, clear: bool = True) -> str:
+def render_frame(
+    state: GameState,
+    clear: bool = True,
+    input_line: str = "> ",
+) -> str:
     """
-    Devolve o ecrã completo como string.
-    Se clear=True, também chama _clear() para limpar o terminal.
-    """
-    if clear:
-        _clear()
+    Gera e (opcionalmente) escreve o frame completo no terminal.
 
+    Parâmetros
+    ----------
+    state      : estado actual do jogo
+    clear      : se True, escreve no terminal com a estratégia
+                 home + clear-per-line + clear-below
+    input_line : linha de prompt a mostrar no fundo (vem de InputReader.prompt_line)
+                 ex: "> a Bob"   ← o utilizador está a escrever "a Bob"
+
+    O cursor termina no fim de `input_line`, por isso o utilizador
+    continua a ver e editar o seu input normalmente.
+    """
     lp = state.local
-    parts = []
+
+    parts: list[str] = []
 
     # ── Cabeçalho ────
     phase_label = {
@@ -151,7 +184,7 @@ def render_frame(state: GameState, clear: bool = True) -> str:
         MatchPhase.ENDED:    "FIM DE JOGO",
     }[state.phase]
 
-    timer = render_timer(state) if state.phase == MatchPhase.ACTIVE else ""
+    timer  = render_timer(state) if state.phase == MatchPhase.ACTIVE else ""
     header = f"{BOLD}{YELLOW}{'─'*10} {phase_label} {timer} {'─'*10}{RESET}"
     parts.append(header)
 
@@ -181,9 +214,23 @@ def render_frame(state: GameState, clear: bool = True) -> str:
     # ── Ações ────
     parts.append("")
     parts.append(render_actions(state))
-    parts.append("")
 
     output = "\n".join(parts)
+
     if clear:
-        print(output)
+        # ── Estratégia de render sem flickering ──────────────────
+        # 1. Cursor para o topo do ecrã
+        # 2. Cada linha do frame + \033[K  (evita lixo à direita)
+        # 3. Linha de input (prompt + buffer) + \033[K
+        # 4. \033[J  (apaga linhas antigas abaixo do frame actual)
+        # 5. Cursor fica no fim do texto digitado → utilizador continua
+        #    a ver exactamente o que escreveu.
+        buf = _HOME
+        for line in output.split("\n"):
+            buf += line + _CLEAR_EOL + "\n"
+        # Linha de input — sempre visível no fundo do frame
+        buf += "\n" + input_line + _CLEAR_EOL + _CLEAR_BELOW
+        sys.stdout.write(buf)
+        sys.stdout.flush()
+
     return output

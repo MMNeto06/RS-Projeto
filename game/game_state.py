@@ -1,9 +1,6 @@
 """
 game/game_state.py
 Estado local do jogo: jogador, mapa, outros jogadores e estado da partida.
-
-GameState é o "cérebro" do cliente — guarda tudo o que o renderer precisa
-de mostrar e que o GameNode precisa de enviar via gRPC.
 """
 
 import time
@@ -12,22 +9,22 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Dict, List, Optional
 
-from dnd_classes import DnDClass, get_class
+from dnd_classes import DnDClass
 
 # ── MAPA ──────────────────────────────────────────────────────────
 
 MAP_W = 20
 MAP_H = 10
 
-MATCH_DURATION = 600   # 10 minutos em segundos
+MATCH_DURATION = 300   # segundos (5 minutos)
 
 
 # ── ESTADO DA PARTIDA ─────────────────────────────────────────────
 
 class MatchPhase(Enum):
     LOBBY    = auto()
-    STARTING = auto()   # contagem decrescente
-    ACTIVE   = auto()   # em jogo
+    STARTING = auto()
+    ACTIVE   = auto()
     ENDED    = auto()
 
 
@@ -48,9 +45,14 @@ class LocalPlayer:
     match_id:   str   = ""
     status_effects: List[str] = field(default_factory=list)
 
-    # Cooldowns das abilidades: {ability_name → turno em que fica disponível}
-    ability_cooldowns: Dict[str, int] = field(default_factory=dict)
-    _turn: int = 0
+    # Cooldowns das abilidades: {ability_name → timestamp em que fica disponível}
+    ability_cooldowns: Dict[str, float] = field(default_factory=dict)
+
+    # Efeitos activos: {effect_name → timestamp de expiração}
+    active_effects: Dict[str, float] = field(default_factory=dict)
+
+    # Alvo do Hunter's Mark (Ranger)
+    marked_target: str = ""
 
     def __post_init__(self):
         self.hp = self.dnd_class.hp_base
@@ -61,10 +63,58 @@ class LocalPlayer:
 
     @property
     def armor_class(self) -> int:
-        return self.dnd_class.armor_class_base
+        """AC base, aumentada para 13 se Mage Armor estiver activo."""
+        base = self.dnd_class.armor_class_base
+        if self.is_effect_active("mage_armor"):
+            return max(base, 13)
+        return base
+
+    # ── COOLDOWNS ─────────────────────────────────────────────────
+
+    def is_ability_ready(self, ability_name: str) -> bool:
+        return time.time() >= self.ability_cooldowns.get(ability_name, 0)
+
+    def cooldown_remaining(self, ability_name: str) -> float:
+        return max(0.0, self.ability_cooldowns.get(ability_name, 0) - time.time())
+
+    def use_ability(self, ability_name: str, cooldown_secs: int):
+        if cooldown_secs > 0:
+            self.ability_cooldowns[ability_name] = time.time() + cooldown_secs
+
+    # ── EFEITOS ACTIVOS ───────────────────────────────────────────
+
+    def is_effect_active(self, effect_name: str) -> bool:
+        return time.time() < self.active_effects.get(effect_name, 0)
+
+    def set_effect(self, effect_name: str, duration_secs: float, label: str = ""):
+        """Activa um efeito por `duration_secs` segundos e adiciona label ao status_effects."""
+        self.active_effects[effect_name] = time.time() + duration_secs
+        if label and label not in self.status_effects:
+            self.status_effects.append(label)
+
+    def tick_effects(self):
+        """Remove efeitos expirados e limpa o status_effects correspondente."""
+        now = time.time()
+        _labels = {
+            "mage_armor":   "Mage Armor",
+            "disengaged":   "Disengaged",
+            "sneak_attack": "Sneak Attack↑",
+            "action_surge": "Action Surge↑",
+            "hunters_mark": "Hunter's Mark",
+        }
+        expired = [k for k, v in self.active_effects.items() if now >= v]
+        for k in expired:
+            label = _labels.get(k)
+            if label and label in self.status_effects:
+                self.status_effects.remove(label)
+            del self.active_effects[k]
+        # Se Hunter's Mark expirou, limpa o alvo
+        if not self.is_effect_active("hunters_mark"):
+            self.marked_target = ""
+
+    # ── DANO / CURA ───────────────────────────────────────────────
 
     def take_damage(self, amount: int) -> int:
-        """Aplica dano e devolve o HP restante."""
         self.hp = max(0, self.hp - amount)
         if self.hp == 0:
             self.alive = False
@@ -82,18 +132,22 @@ class LocalPlayer:
         self.x, self.y = x, y
         self.status_effects.clear()
 
-    def is_ability_ready(self, ability_name: str) -> bool:
-        ready_at = self.ability_cooldowns.get(ability_name, 0)
-        return self._turn >= ready_at
+    # ── RESET DE PARTIDA ──────────────────────────────────────────
 
-    def use_ability(self, ability_name: str, cooldown_turns: int):
-        self.ability_cooldowns[ability_name] = self._turn + cooldown_turns
+    def reset_for_new_match(self, x: int, y: int):
+        """Repõe o jogador para uma nova partida (kills/deaths a 0, HP cheio, sem cooldowns)."""
+        self.hp     = self.max_hp
+        self.alive  = True
+        self.kills  = 0
+        self.deaths = 0
+        self.x, self.y = x, y
+        self.status_effects.clear()
+        self.ability_cooldowns.clear()
+        self.active_effects.clear()
+        self.marked_target = ""
 
-    def advance_turn(self):
-        self._turn += 1
 
-
-# ── PEER REMOTO (estado recebido via StateUpdate) ─────────────────
+# ── PEER REMOTO ───────────────────────────────────────────────────
 
 @dataclass
 class RemotePlayer:
@@ -117,41 +171,35 @@ class RemotePlayer:
 
 class GameState:
     def __init__(self, local: LocalPlayer):
-        self.local:  LocalPlayer                = local
-        self.others: Dict[str, RemotePlayer]    = {}  # node_id → RemotePlayer
-        self.phase:  MatchPhase                 = MatchPhase.LOBBY
-        self.match_id: str                      = ""
-        self.start_time: Optional[float]        = None
-        self.event_log: List[str]               = []   # últimas N mensagens de evento
+        self.local:      LocalPlayer             = local
+        self.others:     Dict[str, RemotePlayer] = {}
+        self.phase:      MatchPhase              = MatchPhase.LOBBY
+        self.match_id:   str                     = ""
+        self.start_time: Optional[float]         = None
+        self.event_log:  List[str]               = []
 
     # ── TEMPO ─────────────────────────────────────────────────────
 
     def time_remaining(self) -> int:
-        """Segundos restantes da partida (0 se não iniciada ou terminada)."""
         if self.phase != MatchPhase.ACTIVE or self.start_time is None:
             return 0
-        elapsed = time.time() - self.start_time
-        return max(0, int(MATCH_DURATION - elapsed))
+        return max(0, int(MATCH_DURATION - (time.time() - self.start_time)))
 
     def check_match_end(self) -> bool:
-        """Devolve True se a partida deve terminar (tempo esgotado)."""
         return self.phase == MatchPhase.ACTIVE and self.time_remaining() == 0
 
     # ── EVENTOS ───────────────────────────────────────────────────
 
     def log_event(self, msg: str):
         ts = time.strftime("%H:%M:%S")
-        entry = f"[{ts}] {msg}"
-        self.event_log.append(entry)
-        if len(self.event_log) > 8:   # manter só as últimas 8 linhas
+        self.event_log.append(f"[{ts}] {msg}")
+        if len(self.event_log) > 8:
             self.event_log.pop(0)
 
     # ── ACTUALIZAR ESTADO REMOTO ──────────────────────────────────
 
     def update_remote(self, pb_state) -> None:
-        """Recebe um game_pb2.PlayerState e actualiza o dict de others."""
-        nid = pb_state.username   # usamos username como chave temporária
-        # (idealmente seria node_id, mas o proto usa username como campo único)
+        nid      = pb_state.username
         existing = self.others.get(nid)
         self.others[nid] = RemotePlayer(
             username=pb_state.username,
@@ -170,6 +218,13 @@ class GameState:
             last_seen=time.time(),
         )
 
+    # ── RESET REMOTES PARA NOVA PARTIDA ───────────────────────────
+
+    def reset_others_for_new_match(self):
+        for p in self.others.values():
+            p.kills  = 0
+            p.deaths = 0
+
     # ── SPAWN ALEATÓRIO ───────────────────────────────────────────
 
     def random_spawn(self) -> tuple[int, int]:
@@ -184,7 +239,6 @@ class GameState:
     # ── SCOREBOARD ────────────────────────────────────────────────
 
     def scoreboard(self) -> List[tuple[str, int, int]]:
-        """Devolve [(username, kills, deaths), …] ordenado por kills."""
         rows = [(self.local.username, self.local.kills, self.local.deaths)]
         for p in self.others.values():
             rows.append((p.username, p.kills, p.deaths))

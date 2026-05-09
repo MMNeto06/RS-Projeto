@@ -1,19 +1,14 @@
 """
 game/game_node.py
 GameNode — integra DHT (Kademlia), servidor gRPC do jogo e loop de input.
-
-Reutiliza a infra-estrutura de descoberta de peers do chat mas
-serve o GameService em vez do ChatService.
 """
 
 import asyncio
 import time
-import random
 import sys
 import os
 
 import grpc
-import aioconsole
 from kademlia.network import Server as KademliaNode
 import kademlia.node as kad_node
 from kademlia.utils import digest
@@ -21,24 +16,20 @@ from kademlia.utils import digest
 import game_pb2
 import game_pb2_grpc
 
-# Adicionar o diretório pai ao path para importar dht_keys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dht_keys import addr_key, username_key
 
-from dnd_classes import DnDClass, get_class
-from game_state  import GameState, LocalPlayer, MatchPhase, MAP_W, MAP_H
+from dnd_classes import DnDClass, roll
+from game_state   import GameState, LocalPlayer, MatchPhase, MAP_W, MAP_H
 from game_servicer import GameServicer
-from renderer    import render_frame
+from renderer      import render_frame
+from input_reader  import InputReader
+
+# Segundos de exibição do ecrã de fim antes de reiniciar
+_MATCH_END_PAUSE = 8
 
 
 class GameNode:
-    """
-    Nó P2P do jogo. Responsabilidades:
-      1. DHT Kademlia: descoberta de peers
-      2. Servidor gRPC: recebe ataques, state updates, eventos
-      3. Loop de jogo: input do utilizador, render do ecrã
-    """
-
     def __init__(self, username: str, dnd_class: DnDClass,
                  host: str, grpc_port: int, kad_port: int,
                  bootstrap=None, match_id: str = ""):
@@ -50,16 +41,16 @@ class GameNode:
 
         self.kad         = KademliaNode(ksize=20, alpha=3)
         self.grpc_server = None
-        self.peers: dict = {}   # node_id → {username, grpc_addr, last_seen, class_name}
+        self.peers: dict = {}
 
-        # Estado local do jogo
         local = LocalPlayer(
             username=username,
-            node_id="",          # preenchido após start_kademlia
+            node_id="",
             dnd_class=dnd_class,
             match_id=match_id,
         )
         self.state = GameState(local)
+        self._reader = InputReader(prompt="> ")
 
     @property
     def node_id(self) -> str:
@@ -76,7 +67,6 @@ class GameNode:
             print("[DHT] Ligado!")
         else:
             print("[DHT] Primeiro node (bootstrap).")
-
         self.state.local.node_id = self.node_id
 
     async def register_self(self):
@@ -94,7 +84,6 @@ class GameNode:
         await self.kad.get("game:discover")
         target = kad_node.Node(digest("game:closest"))
         neighbors = self.kad.protocol.router.find_neighbors(target)
-
         for n in neighbors:
             if (n.ip, n.port) == (self.host, self.kad_port):
                 continue
@@ -113,7 +102,6 @@ class GameNode:
                     stub.Ping(game_pb2.PingRequest(from_user=self.node_id)),
                     timeout=2.0,
                 )
-                # Guardar peer com username
                 if resp.username not in self.peers:
                     self.peers[resp.username] = {
                         "username":   resp.username,
@@ -124,7 +112,7 @@ class GameNode:
         except Exception:
             pass
 
-    # ── gRPC SERVER ───────────────────────────────────────────────
+    # ── gRPC ──────────────────────────────────────────────────────
 
     async def start_grpc_server(self):
         self.grpc_server = grpc.aio.server()
@@ -136,10 +124,7 @@ class GameNode:
         await self.grpc_server.start()
         print(f"[gRPC] Servidor do jogo na porta {self.grpc_port}")
 
-    # ── ENVIO ─────────────────────────────────────────────────────
-
     async def _send(self, addr: str, rpc_fn, request, timeout: float = 3.0):
-        """Helper genérico para chamadas gRPC com timeout."""
         host, port = addr.split(":")
         try:
             async with grpc.aio.insecure_channel(f"{host}:{port}") as ch:
@@ -148,9 +133,22 @@ class GameNode:
         except Exception:
             return None
 
+    # ── HELPERS ───────────────────────────────────────────────────
+
+    def _find_peer(self, username: str) -> dict | None:
+        """Procura peer pelo username (case-insensitive)."""
+        target_lower = username.lower()
+        return next(
+            (v for v in self.peers.values()
+             if v.get("username", "").lower() == target_lower),
+            None,
+        )
+
+    # ── BROADCAST ─────────────────────────────────────────────────
+
     async def broadcast_state(self):
-        """Envia o nosso PlayerState a todos os peers."""
         lp = self.state.local
+        lp.tick_effects()   # limpa efeitos expirados antes de enviar
         pb = game_pb2.PlayerState(
             username=lp.username,
             hp=lp.hp,
@@ -174,7 +172,6 @@ class GameNode:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def announce_join(self):
-        """Anuncia a nossa entrada na partida a todos os peers."""
         req = game_pb2.JoinRequest(
             username=self.username,
             class_name=self.state.local.dnd_class.name,
@@ -189,20 +186,42 @@ class GameNode:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    # ── ATAQUE BÁSICO ─────────────────────────────────────────────
+
     async def send_attack(self, target_username: str) -> game_pb2.AttackResult | None:
-        """
-        Ataca um alvo pelo username.
-        Rola d20+mod vs AC do alvo (calculado localmente para feedback imediato).
-        O alvo calcula o dano real e devolve AttackResult.
-        """
-        peer = self.peers.get(target_username)
+        peer = self._find_peer(target_username)
         if not peer:
             self.state.log_event(f"[!] Jogador '{target_username}' não encontrado.")
             return None
 
-        lp = self.state.local
+        lp           = self.state.local
         attack_roll  = lp.dnd_class.roll_attack()
         damage_roll  = lp.dnd_class.roll_damage()
+        extra_notes  = []
+
+        # Action Surge — dano duplo no próximo ataque
+        if lp.is_effect_active("action_surge"):
+            damage_roll *= 2
+            del lp.active_effects["action_surge"]
+            if "Action Surge↑" in lp.status_effects:
+                lp.status_effects.remove("Action Surge↑")
+            extra_notes.append("Action Surge!")
+
+        # Sneak Attack — +2d6 no próximo ataque
+        if lp.is_effect_active("sneak_attack"):
+            bonus = roll("2d6")
+            damage_roll += bonus
+            del lp.active_effects["sneak_attack"]
+            if "Sneak Attack↑" in lp.status_effects:
+                lp.status_effects.remove("Sneak Attack↑")
+            extra_notes.append(f"Sneak Attack +{bonus}")
+
+        # Hunter's Mark — +1d6 se o alvo estiver marcado
+        if lp.is_effect_active("hunters_mark") and \
+                lp.marked_target.lower() == target_username.lower():
+            bonus = roll("1d6")
+            damage_roll += bonus
+            extra_notes.append(f"Hunter's Mark +{bonus}")
 
         req = game_pb2.AttackRequest(
             attacker=self.username,
@@ -219,136 +238,322 @@ class GameNode:
             req,
         )
         if result:
+            extras = f"  [{', '.join(extra_notes)}]" if extra_notes else ""
             if result.hit:
-                self.state.local.kills += (1 if result.target_died else 0)
+                lp.kills += (1 if result.target_died else 0)
                 self.state.log_event(
                     f"Atacaste {target_username} com {lp.dnd_class.weapon} "
-                    f"→ {result.damage_dealt} dano"
+                    f"→ {result.damage_dealt} dano{extras}"
                     + (" 💀 kill!" if result.target_died else "")
                 )
             else:
-                self.state.log_event(f"Atacaste {target_username} — \033[33mfalhado!\033[0m")
+                self.state.log_event(f"Atacaste {target_username} — \033[33mfalhado!\033[0m{extras}")
         return result
 
+    # ── ABILIDADES ────────────────────────────────────────────────
+
+    async def _use_ability(self, idx: int, target: str | None = None):
+        """
+        Executa a abilidade `idx` (0-based) da classe do jogador local.
+        Algumas abilidades precisam de um `target` (username).
+        """
+        lp        = self.state.local
+        abilities = lp.dnd_class.abilities
+
+        if not (0 <= idx < len(abilities)):
+            self.state.log_event("[!] Abilidade inválida.")
+            return
+
+        ab         = abilities[idx]
+        class_name = lp.dnd_class.name.lower()
+
+        if not lp.is_ability_ready(ab.name):
+            remaining = lp.cooldown_remaining(ab.name)
+            self.state.log_event(f"⏳ {ab.name} em cooldown ({remaining:.0f}s).")
+            return
+
+        used = False
+
+        # ── FIGHTER ───────────────────────────────────────────────
+        if class_name == "fighter":
+
+            if ab.name == "Second Wind":
+                heal = roll("1d10") + 3
+                lp.heal(heal)
+                self.state.log_event(
+                    f"⚔ Second Wind: +{heal} HP ({lp.hp}/{lp.max_hp})"
+                )
+                used = True
+
+            elif ab.name == "Action Surge":
+                lp.set_effect("action_surge", 30, "Action Surge↑")
+                self.state.log_event("⚔ Action Surge: próximo ataque faz dano duplo!")
+                used = True
+
+        # ── WIZARD ────────────────────────────────────────────────
+        elif class_name == "wizard":
+
+            if ab.name == "Magic Missile":
+                if not target:
+                    self.state.log_event("🔮 Uso: 1 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                total = sum(roll("1d4") + 1 for _ in range(3))
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    weapon="Magic Missile",
+                    attack_roll=999,      # auto-acerto
+                    base_damage_roll=total,
+                    damage_type="force",
+                    target=target,
+                    is_spell=True,
+                )
+                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                if result:
+                    dmg_str = f"{result.damage_dealt} dano de força"
+                    self.state.log_event(
+                        f"🔮 Magic Missile → {target}: {dmg_str}"
+                        + (" 💀" if result.target_died else "")
+                    )
+                    if result.target_died:
+                        lp.kills += 1
+                used = True
+
+            elif ab.name == "Mage Armor":
+                lp.set_effect("mage_armor", 30, "Mage Armor")
+                self.state.log_event(
+                    f"🔮 Mage Armor activo! AC={lp.armor_class} durante 30s."
+                )
+                used = True
+
+        # ── ROGUE ─────────────────────────────────────────────────
+        elif class_name == "rogue":
+
+            if ab.name == "Sneak Attack":
+                lp.set_effect("sneak_attack", 15, "Sneak Attack↑")
+                self.state.log_event("🗡 Sneak Attack: próximo ataque +2d6!")
+                used = True
+
+            elif ab.name == "Disengage":
+                lp.set_effect("disengaged", 5, "Disengaged")
+                self.state.log_event("🗡 Disengage: imune a ataques por 5s!")
+                used = True
+
+        # ── CLERIC ────────────────────────────────────────────────
+        elif class_name == "cleric":
+
+            if ab.name == "Cure Wounds":
+                heal = roll("1d8") + 3
+                lp.heal(heal)
+                self.state.log_event(
+                    f"✨ Cure Wounds: +{heal} HP ({lp.hp}/{lp.max_hp})"
+                )
+                used = True
+
+            elif ab.name == "Sacred Flame":
+                # CD=0 → sempre disponível; não regista cooldown
+                if not target:
+                    self.state.log_event("✨ Uso: 2 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                dmg = roll("1d8")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    weapon="Sacred Flame",
+                    attack_roll=999,      # auto-acerto (saving throw simplificado)
+                    base_damage_roll=dmg,
+                    damage_type="radiant",
+                    target=target,
+                    is_spell=True,
+                )
+                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                if result:
+                    self.state.log_event(
+                        f"✨ Sacred Flame → {target}: {result.damage_dealt} dano radiante"
+                        + (" 💀" if result.target_died else "")
+                    )
+                    if result.target_died:
+                        lp.kills += 1
+                # CD=0: usado mas sem cooldown registado
+                await self.broadcast_state()
+                return
+
+        # ── RANGER ────────────────────────────────────────────────
+        elif class_name == "ranger":
+
+            if ab.name == "Hunter's Mark":
+                if not target:
+                    self.state.log_event("🏹 Uso: 1 <username>")
+                    return
+                lp.marked_target = target
+                lp.set_effect("hunters_mark", 30, "Hunter's Mark")
+                self.state.log_event(
+                    f"🏹 Hunter's Mark em {target}: +1d6 nos próximos 30s!"
+                )
+                used = True
+
+            elif ab.name == "Volley":
+                # Ataca todos os jogadores a distância Manhattan ≤ 2
+                nearby = [
+                    p for p in self.state.others.values()
+                    if p.alive and abs(p.x - lp.x) + abs(p.y - lp.y) <= 2
+                ]
+                if not nearby:
+                    self.state.log_event("🏹 Volley: sem alvos no raio 2.")
+                    return
+                for t in nearby:
+                    peer = self._find_peer(t.username)
+                    if not peer:
+                        continue
+                    dmg = roll("1d8") + lp.dnd_class.damage_modifier
+                    req = game_pb2.AttackRequest(
+                        attacker=self.username,
+                        weapon="Longbow",
+                        attack_roll=lp.dnd_class.roll_attack(),
+                        base_damage_roll=dmg,
+                        damage_type="piercing",
+                        target=t.username,
+                        is_spell=False,
+                    )
+                    result = await self._send(
+                        peer["grpc_addr"], lambda s, r: s.Attack(r), req
+                    )
+                    if result:
+                        if result.hit:
+                            self.state.log_event(
+                                f"🏹 Volley → {t.username}: {result.damage_dealt} dano"
+                                + (" 💀" if result.target_died else "")
+                            )
+                            if result.target_died:
+                                lp.kills += 1
+                        else:
+                            self.state.log_event(f"🏹 Volley → {t.username}: falhado!")
+                used = True
+
+        if used:
+            if ab.cooldown_secs > 0:
+                lp.use_ability(ab.name, ab.cooldown_secs)
+            await self.broadcast_state()
+
+    # ── MOVIMENTO ─────────────────────────────────────────────────
+
     async def move(self, dx: int, dy: int):
-        """Move o jogador local e faz broadcast do novo estado."""
-        lp = self.state.local
-        lp.x = max(0, min(MAP_W - 1, lp.x + dx))
-        lp.y = max(0, min(MAP_H - 1, lp.y + dy))
+        lp    = self.state.local
+        lp.x  = max(0, min(MAP_W - 1, lp.x + dx))
+        lp.y  = max(0, min(MAP_H - 1, lp.y + dy))
         await self.broadcast_state()
+
+    # ── RENDER LOOP ───────────────────────────────────────────────
+
+    async def _render_loop(self):
+        while True:
+            render_frame(
+                self.state,
+                clear=True,
+                input_line=self._reader.prompt_line,
+            )
+            if self._reader.input_event:
+                try:
+                    await asyncio.wait_for(
+                        self._reader.input_event.wait(),
+                        timeout=1.0,
+                    )
+                    self._reader.input_event.clear()
+                except asyncio.TimeoutError:
+                    pass
+            else:
+                await asyncio.sleep(1)
 
     # ── INPUT LOOP ────────────────────────────────────────────────
 
-    async def _render_loop(self):
-        """Re-renderiza o ecrã a cada segundo."""
-        while True:
-            render_frame(self.state, clear=True)
-            await asyncio.sleep(1)
-
     async def input_loop(self):
         """
-        Loop de input assíncrono (aioconsole).
-        
         Comandos:
-          a <username>     → atacar
-          m w/a/s/d        → mover (wasd)
-          1, 2, …          → usar abilidade N
-          s                → mostrar scoreboard
+          a <user>         → atacar
+          m w/a/s/d        → mover
+          1 [user]         → abilidade 1 (com alvo opcional)
+          2 [user]         → abilidade 2 (com alvo opcional)
+          s                → scoreboard
           q                → sair
         """
         print("\n[Jogo] A entrar na partida…")
         await self.announce_join()
 
-        # Spawn aleatório
         x, y = self.state.random_spawn()
         self.state.local.x, self.state.local.y = x, y
+
+        # ── Auto-start da partida ──────────────────────────────────
+        self.state.phase      = MatchPhase.ACTIVE
+        self.state.start_time = time.time()
+        self.state.match_id   = self.state.local.match_id
+
+        # Avisar os outros que a partida está em curso
+        await self._broadcast_event(game_pb2.GameEvent.MATCH_STARTED)
         await self.broadcast_state()
 
-        # Iniciar render loop em background
+        self._reader.start()
         render_task = asyncio.create_task(self._render_loop())
 
-        while True:
-            try:
-                text = await aioconsole.ainput("")
-                text = text.strip().lower()
+        try:
+            while True:
+                try:
+                    text = await self._reader.readline()
+                except (KeyboardInterrupt, EOFError):
+                    break
 
+                text  = text.strip()
                 if not text:
                     continue
 
                 parts = text.split()
-                cmd   = parts[0]
+                cmd   = parts[0].lower()
 
                 if cmd == "q":
                     break
 
                 elif cmd == "a" and len(parts) > 1:
-                    target = parts[1]
-                    await self.send_attack(target)
+                    await self.send_attack(parts[1])
                     await self.broadcast_state()
 
                 elif cmd == "m" and len(parts) > 1:
-                    direction = parts[1]
-                    moves = {"w": (0,-1), "s": (0,1), "a": (-1,0), "d": (1,0)}
+                    moves = {"w": (0, -1), "s": (0, 1), "a": (-1, 0), "d": (1, 0)}
+                    direction = parts[1].lower()
                     if direction in moves:
-                        dx, dy = moves[direction]
-                        await self.move(dx, dy)
+                        await self.move(*moves[direction])
                     else:
                         self.state.log_event("[!] Direção inválida. Usa w/a/s/d")
 
                 elif cmd.isdigit():
-                    idx = int(cmd) - 1
-                    abilities = self.state.local.dnd_class.abilities
-                    if 0 <= idx < len(abilities):
-                        ab = abilities[idx]
-                        if self.state.local.is_ability_ready(ab.name):
-                            self.state.local.use_ability(ab.name, ab.cooldown_turns)
-                            self.state.log_event(f"Usaste \033[1m{ab.name}\033[0m!")
-                            # TODO: implementar efeito real da abilidade
-                        else:
-                            self.state.log_event(f"{ab.name} ainda em cooldown.")
-                    else:
-                        self.state.log_event("[!] Abilidade inválida.")
+                    idx    = int(cmd) - 1
+                    target = parts[1] if len(parts) > 1 else None
+                    await self._use_ability(idx, target)
 
                 elif cmd == "s":
-                    rows = self.state.scoreboard()
                     self.state.log_event("── Scoreboard ──")
-                    for uname, k, d in rows:
+                    for uname, k, d in self.state.scoreboard():
                         self.state.log_event(f"  {uname}: {k}K / {d}D")
 
                 else:
                     self.state.log_event(
-                        "[!] Comandos: a <user> | m w/a/s/d | 1/2 abilidade | q sair"
+                        "[!] Comandos: a <user> | m w/a/s/d | 1/2 [user] | s | q"
                     )
 
-            except (KeyboardInterrupt, EOFError):
-                break
+        finally:
+            render_task.cancel()
+            self._reader.stop()
 
-        render_task.cancel()
+    # ── MATCH END / RESET ─────────────────────────────────────────
 
-    # ── ARRANQUE ──────────────────────────────────────────────────
-
-    async def _refresh_loop(self):
-        while True:
-            try:
-                await self.register_self()
-                await self.discover_peers()
-                await self.broadcast_state()
-                if self.state.check_match_end():
-                    await self._handle_match_end()
-            except Exception:
-                pass
-            await asyncio.sleep(10)
-
-    async def _handle_match_end(self):
-        """Calcula vencedor e anuncia o fim da partida."""
-        sb = self.state.scoreboard()
-        winner = sb[0][0] if sb else "ninguém"
-        self.state.phase = MatchPhase.ENDED
-        self.state.log_event(f"🏆 Jogo terminado! Vencedor: {winner}")
-
+    async def _broadcast_event(self, event_type, payload: str = ""):
         event = game_pb2.GameEvent(
-            type=game_pb2.GameEvent.MATCH_ENDED,
-            payload=winner,
+            type=event_type,
+            payload=payload,
             timestamp=int(time.time()),
             match_id=self.state.match_id,
             event_author=self.username,
@@ -361,9 +566,57 @@ class GameNode:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def _handle_match_end(self):
+        sb     = self.state.scoreboard()
+        winner = sb[0][0] if sb else "ninguém"
+
+        # Mostrar resultado
+        self.state.log_event("━" * 30)
+        self.state.log_event(f"🏆 FIM DE JOGO!  Vencedor: {winner}")
+        for uname, k, d in sb:
+            self.state.log_event(f"   {uname}: {k}K / {d}D")
+        self.state.log_event(f"🔄 Nova partida em {_MATCH_END_PAUSE}s…")
+        self.state.log_event("━" * 30)
+
+        await self._broadcast_event(game_pb2.GameEvent.MATCH_ENDED, winner)
+        await asyncio.sleep(_MATCH_END_PAUSE)
+        await self._reset_match()
+
+    async def _reset_match(self):
+        """Repõe todos os jogadores e inicia nova partida."""
+        x, y = self.state.random_spawn()
+        self.state.local.reset_for_new_match(x, y)
+        self.state.reset_others_for_new_match()
+        self.state.phase      = MatchPhase.ACTIVE
+        self.state.start_time = time.time()
+
+        self.state.log_event("🔄 Nova partida iniciada!")
+        await self._broadcast_event(game_pb2.GameEvent.MATCH_RESET)
+        await self.broadcast_state()
+
+    # ── REFRESH LOOP ──────────────────────────────────────────────
+
+    async def _refresh_loop(self):
+        while True:
+            try:
+                await self.register_self()
+                await self.discover_peers()
+                await self.broadcast_state()
+
+                # Verificar fim de partida (apenas se ACTIVE para não re-trigger)
+                if self.state.phase == MatchPhase.ACTIVE and self.state.check_match_end():
+                    self.state.phase = MatchPhase.ENDED   # bloqueia re-trigger
+                    asyncio.create_task(self._handle_match_end())
+
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+
+    # ── ARRANQUE ──────────────────────────────────────────────────
+
     async def run(self):
         import logging
-        logging.getLogger("kademlia").setLevel(logging.WARNING)
+        logging.getLogger("kademlia").setLevel(logging.ERROR)
 
         await self.start_kademlia()
         await self.start_grpc_server()
@@ -371,7 +624,6 @@ class GameNode:
         asyncio.create_task(self._refresh_loop())
         await self.input_loop()
 
-        # Saída limpa
         leave_req = game_pb2.LeaveNotification(username=self.username)
         tasks = [
             self._send(p["grpc_addr"], lambda s, r: s.Leave(r), leave_req)

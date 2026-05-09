@@ -32,7 +32,7 @@ def roll(notation: str) -> int:
 class Ability:
     name: str
     description: str
-    cooldown_turns: int = 0   # 0 = pode usar sempre
+    cooldown_secs: int = 0    # 0 = pode usar sempre (sem cooldown)
     is_spell: bool = False
 
 
@@ -69,8 +69,8 @@ CLASSES: dict[str, DnDClass] = {
         attack_modifier=5,
         damage_modifier=3,
         abilities=[
-            Ability("Second Wind",   "Recupera 1d10+3 HP",           cooldown_turns=5),
-            Ability("Action Surge",  "+1 ataque extra neste turno",   cooldown_turns=6),
+            Ability("Second Wind",  "Recupera 1d10+3 HP",          cooldown_secs=30),
+            Ability("Action Surge", "Próximo ataque faz dano duplo", cooldown_secs=60),
         ],
     ),
 
@@ -84,8 +84,8 @@ CLASSES: dict[str, DnDClass] = {
         attack_modifier=7,
         damage_modifier=4,
         abilities=[
-            Ability("Magic Missile", "3 dardos de força (1d4+1 cada)",  is_spell=True),
-            Ability("Mage Armor",    "AC torna-se 13 por 3 turnos",      cooldown_turns=8, is_spell=True),
+            Ability("Magic Missile", "3 dardos auto-acerto (1d4+1 cada) [uso: 1 <user>]", cooldown_secs=12, is_spell=True),
+            Ability("Mage Armor",    "AC passa a 13 durante 30s",                          cooldown_secs=60, is_spell=True),
         ],
     ),
 
@@ -99,8 +99,8 @@ CLASSES: dict[str, DnDClass] = {
         attack_modifier=6,
         damage_modifier=2,
         abilities=[
-            Ability("Sneak Attack",  "+2d6 dano se aliado adjacente ao alvo", cooldown_turns=0),
-            Ability("Disengage",     "Sai de combate sem provocar ataques",   cooldown_turns=3),
+            Ability("Sneak Attack", "Próximo ataque +2d6 dano",       cooldown_secs=8),
+            Ability("Disengage",    "Imune a ataques por 5s",          cooldown_secs=20),
         ],
     ),
 
@@ -114,8 +114,8 @@ CLASSES: dict[str, DnDClass] = {
         attack_modifier=4,
         damage_modifier=2,
         abilities=[
-            Ability("Cure Wounds",   "Cura 1d8+3 HP em si próprio",          cooldown_turns=4, is_spell=True),
-            Ability("Sacred Flame",  "Ataque sagrado 1d8 radiante à distância", cooldown_turns=0, is_spell=True),
+            Ability("Cure Wounds",  "Cura 1d8+3 HP em si próprio",               cooldown_secs=25, is_spell=True),
+            Ability("Sacred Flame", "Ataque radiante 1d8 auto-acerto [uso: 2 <user>]", cooldown_secs=0,  is_spell=True),
         ],
     ),
 
@@ -129,8 +129,8 @@ CLASSES: dict[str, DnDClass] = {
         attack_modifier=6,
         damage_modifier=3,
         abilities=[
-            Ability("Hunter's Mark", "+1d6 dano no alvo marcado por 3 turnos", cooldown_turns=5),
-            Ability("Volley",        "Ataca todos os alvos num raio 2",         cooldown_turns=6),
+            Ability("Hunter's Mark", "+1d6 no alvo marcado por 30s [uso: 1 <user>]", cooldown_secs=35),
+            Ability("Volley",        "Ataca todos os alvos no raio 2",               cooldown_secs=45),
         ],
     ),
 }

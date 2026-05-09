@@ -1,19 +1,36 @@
-- consola atualiza muito rápido, se possível mudar para separar o ecrã de refresh do input.
-  - por causa disso, difcíl mover, mas não impossível
 - lobbies não estão a funcionar como queremos, fazer coisa para tal -> responsabilidade do Silva
   - tipo selecioanr juntar a um lobby antes de entrar na partida
   - sistema de criação de lobbies
-- muito lag na saída de um jogador, not sure how fix if fix possible?
-- habilidades especiais não estão a funcionar, ou não fazem nada óbvio
-- tudo que está em função de turnos tem que ser em função de tempo, pois é em tempo real
-- not sure match timer is working
--- username tem que ser todo lowercase para ser reconhecido
--- trocar as cores das pessoas se tiverem a mesma inicial
+  - also lobby tem que sincronizar o tempo de partida quando alguém entra. após uma partida terminar, tudo em sintonia, 
+    mas se alguém se junta a meio eles ficam com match timer diferente
+- mais classes, features e balanceamento
+  - há mais classes em dnd, podemos meter mais algumas, e mais algumas habilidades
+  - mapa pode ter obstáculos (paredes) que influenciam se alguem chega a outra pessoa
+  - após tipo 3 kills, recebem uma poção de cura ? (da mesma forma que o CS2 faz)
+  - precisa de ser balanceado, wizard é OP
+  - sucesso ou falha de um ataque deve ter em conta distância entre jogadores; eu não sei se está assim ou não, parece mas ao mesmo tempo não parece.
+- desenvolver mais o menu inicial
+  - lobbies
+  - help
+  - mudar username?? that might be hard
+  - etc.
+- pensar nos testes a fazer à coisa
+  - pensar/anotar os testes que vão ser feitos
+  - ter a capacidade de especificar tudo necessário para entrar num jogo através de sys args
+  - imagino que vai ser em bash da mesma forma que SO foi?
+  - depois ver a prevenção de ataques maliciosos né?
+- alguém testar em vms? ou no mesmo localhost e em pcs diferentes. tipo seria interessante, mas talvez umas das últimas coisas?
 
-good stuff
+
+good stuff (aka working stuff)
 - is rendering
 - moving funcional
 - está a renderizar bem
 - discovery de outros está boa
 - ataques funcionam
 - k/d funciona
+- cores diferentes, uppercase aceitado
+- tudo atualiza como deveria, e não há lag a sair 
+- da forma como está acho que faz re render sempre que escreveres algo no terminal, which is fun
+- habilidades especiais temos, e usam tempo no cooldown
+- temos tempo, com match timer e tudo
