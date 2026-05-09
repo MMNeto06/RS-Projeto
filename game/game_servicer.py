@@ -158,3 +158,63 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             await self.node.broadcast_state()
 
         return game_pb2.Ack(received=True, by=self.state.local.username)
+    
+    async def ValidateAttack(self, request, context):
+        """
+        Chamado pelo atacante antes de enviar o ataque ao alvo.
+        Só o host do lobby processa este RPC de forma útil —
+        nos outros nodes, devolve sempre aprovado (fallback seguro).
+        """
+        if not self.node.lobby._is_host:
+            return game_pb2.ValidateAttackResponse(approved=True, reason="not host")
+ 
+        approved, reason = self.node.lobby.validate_attack(
+            attacker_class=request.attacker_class,
+            damage=request.damage,
+            weapon=request.weapon,
+            is_spell=request.is_spell,
+        )
+ 
+        if not approved:
+            self.state.log_event(
+                f"[Host] ⚠ Ataque rejeitado de \033[31m{request.attacker}\033[0m "
+                f"({request.attacker_class}): {reason}"
+            )
+ 
+        return game_pb2.ValidateAttackResponse(approved=approved, reason=reason)
+    
+    async def LobbyNotify(self, request, context):
+        """
+        Recebe notificações de lobby enviadas por outros peers
+        (entrou, saiu, ficou pronto, etc.) e mostra-as no terminal.
+        """
+        Type = game_pb2.LobbyNotification.Type
+ 
+        if request.type == Type.PLAYER_JOINED:
+            self.state.log_event(
+                f"\033[32m{request.username}\033[0m entrou no lobby {request.lobby_code}."
+            )
+        elif request.type == Type.PLAYER_LEFT:
+            self.state.log_event(
+                f"\033[31m{request.username}\033[0m saiu do lobby {request.lobby_code}."
+            )
+        elif request.type == Type.PLAYER_READY:
+            self.state.log_event(
+                f"\033[32m{request.username}\033[0m está \033[1mPRONTO\033[0m."
+            )
+        elif request.type == Type.PLAYER_UNREADY:
+            self.state.log_event(
+                f"\033[33m{request.username}\033[0m retirou o estado de pronto."
+            )
+        elif request.type == Type.LOBBY_STARTED:
+            self.state.log_event(
+                "\033[1m\033[32m⚔  O host iniciou o jogo!\033[0m"
+            )
+        elif request.type == Type.LOBBY_CLOSED:
+            self.state.log_event(
+                f"\033[31mO lobby {request.lobby_code} foi encerrado pelo host.\033[0m"
+            )
+ 
+        return game_pb2.LobbyNotificationAck(ok=True)
+ 
+

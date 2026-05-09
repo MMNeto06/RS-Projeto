@@ -9,6 +9,8 @@ service GameService {
   rpc Join (JoinRequest) returns (Ack);
   rpc Leave (LeaveNotification) returns (Ack);
   rpc BroadcastEvent (GameEvent) returns (Ack);
+  rpc ValidateAttack (ValidateAttackRequest)  returns (ValidateAttackResponse);
+  rpc LobbyNotify    (LobbyNotification)      returns (LobbyNotificationAck);
 }
 
 message ChatMessage {
@@ -40,6 +42,7 @@ message AttackRequest {
   string damage_type = 5;
   string target = 6;
   bool is_spell = 7;
+  string attacker_class = 8;  
 }
 
 message AttackResult {
@@ -88,4 +91,37 @@ message GameEvent {
   int64 timestamp = 3;
   string match_id = 4;
   string event_author = 5; 
+}
+  
+message ValidateAttackRequest {
+  string attacker       = 1;
+  string attacker_class = 2;
+  string weapon         = 3;
+  int32  damage         = 4;
+  bool   is_spell       = 5;
+  string target         = 6;
+}
+
+message ValidateAttackResponse {
+  bool   approved = 1;
+  string reason   = 2;
+}
+
+message LobbyNotification {
+  enum Type {
+    PLAYER_JOINED  = 0;
+    PLAYER_LEFT    = 1;
+    PLAYER_READY   = 2;
+    PLAYER_UNREADY = 3;
+    LOBBY_STARTED  = 4;
+    LOBBY_CLOSED   = 5;
+  }
+  Type   type       = 1;
+  string username   = 2;
+  string lobby_code = 3;
+  string payload    = 4;
+}
+
+message LobbyNotificationAck {
+  bool ok = 1;
 }

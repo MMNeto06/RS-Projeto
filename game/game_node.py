@@ -24,6 +24,7 @@ from game_state   import GameState, LocalPlayer, MatchPhase, MAP_W, MAP_H
 from game_servicer import GameServicer
 from renderer      import render_frame
 from input_reader  import InputReader
+from lobby_manager import LobbyManager
 
 # Segundos de exibição do ecrã de fim antes de reiniciar
 _MATCH_END_PAUSE = 8
@@ -50,6 +51,14 @@ class GameNode:
             match_id=match_id,
         )
         self.state = GameState(local)
+        self.lobby = LobbyManager(
+            kad=self.kad,
+            node_id="",
+            username=username,
+            peers=self.peers,
+            send_fn=self._send,
+        )
+
         self._reader = InputReader(prompt="> ")
 
     @property
@@ -60,6 +69,7 @@ class GameNode:
 
     async def start_kademlia(self):
         await self.kad.listen(self.kad_port)
+
         if self.bootstrap:
             print(f"[DHT] A ligar ao bootstrap {self.bootstrap}…")
             await self.kad.bootstrap([self.bootstrap])
@@ -67,7 +77,9 @@ class GameNode:
             print("[DHT] Ligado!")
         else:
             print("[DHT] Primeiro node (bootstrap).")
+
         self.state.local.node_id = self.node_id
+        self.lobby.node_id = self.node_id
 
     async def register_self(self):
         addr = f"{self.host}:{self.grpc_port}"
@@ -188,43 +200,47 @@ class GameNode:
 
     # ── ATAQUE BÁSICO ─────────────────────────────────────────────
 
-    async def send_attack(self, target_username: str) -> game_pb2.AttackResult | None:
+    async def send_attack(self, target_username: str):
+        """
+        Versão com validação: antes de enviar o ataque ao alvo,
+        pede confirmação ao host do lobby.
+        """
         peer = self._find_peer(target_username)
         if not peer:
             self.state.log_event(f"[!] Jogador '{target_username}' não encontrado.")
             return None
-
+    
         lp           = self.state.local
         attack_roll  = lp.dnd_class.roll_attack()
         damage_roll  = lp.dnd_class.roll_damage()
         extra_notes  = []
-
-        # Action Surge — dano duplo no próximo ataque
+    
         if lp.is_effect_active("action_surge"):
             damage_roll *= 2
             del lp.active_effects["action_surge"]
             if "Action Surge↑" in lp.status_effects:
                 lp.status_effects.remove("Action Surge↑")
             extra_notes.append("Action Surge!")
-
-        # Sneak Attack — +2d6 no próximo ataque
+    
         if lp.is_effect_active("sneak_attack"):
+            from dnd_classes import roll
             bonus = roll("2d6")
             damage_roll += bonus
             del lp.active_effects["sneak_attack"]
             if "Sneak Attack↑" in lp.status_effects:
                 lp.status_effects.remove("Sneak Attack↑")
             extra_notes.append(f"Sneak Attack +{bonus}")
-
-        # Hunter's Mark — +1d6 se o alvo estiver marcado
+    
         if lp.is_effect_active("hunters_mark") and \
                 lp.marked_target.lower() == target_username.lower():
+            from dnd_classes import roll
             bonus = roll("1d6")
             damage_roll += bonus
             extra_notes.append(f"Hunter's Mark +{bonus}")
-
+    
         req = game_pb2.AttackRequest(
             attacker=self.username,
+            attacker_class=lp.dnd_class.name, 
             weapon=lp.dnd_class.weapon,
             attack_roll=attack_roll,
             base_damage_roll=damage_roll,
@@ -232,6 +248,12 @@ class GameNode:
             target=target_username,
             is_spell=False,
         )
+    
+        if self.lobby.current_lobby and not self.lobby._is_host:
+            approved = await self.lobby.request_validation(req)
+            if not approved:
+                return None   # host rejeitou; mensagem já foi mostrada
+    
         result = await self._send(
             peer["grpc_addr"],
             lambda s, r: s.Attack(r),
@@ -247,8 +269,11 @@ class GameNode:
                     + (" 💀 kill!" if result.target_died else "")
                 )
             else:
-                self.state.log_event(f"Atacaste {target_username} — \033[33mfalhado!\033[0m{extras}")
+                self.state.log_event(
+                    f"Atacaste {target_username} — \033[33mfalhado!\033[0m{extras}"
+                )
         return result
+
 
     # ── ABILIDADES ────────────────────────────────────────────────
 
@@ -304,6 +329,7 @@ class GameNode:
                 total = sum(roll("1d4") + 1 for _ in range(3))
                 req = game_pb2.AttackRequest(
                     attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
                     weapon="Magic Missile",
                     attack_roll=999,      # auto-acerto
                     base_damage_roll=total,
@@ -365,6 +391,7 @@ class GameNode:
                 dmg = roll("1d8")
                 req = game_pb2.AttackRequest(
                     attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
                     weapon="Sacred Flame",
                     attack_roll=999,      # auto-acerto (saving throw simplificado)
                     base_damage_roll=dmg,
@@ -414,6 +441,7 @@ class GameNode:
                     dmg = roll("1d8") + lp.dnd_class.damage_modifier
                     req = game_pb2.AttackRequest(
                         attacker=self.username,
+                        attacker_class=lp.dnd_class.name,
                         weapon="Longbow",
                         attack_roll=lp.dnd_class.roll_attack(),
                         base_damage_roll=dmg,
@@ -472,8 +500,63 @@ class GameNode:
 
     # ── INPUT LOOP ────────────────────────────────────────────────
 
+    def _print_lobby_help(self):
+        print("""
+            [Lobby] Comandos disponíveis:
+            lobby create <nome> <maxJogadores>  → Criar um novo lobby
+            lobby list                          → Listar lobbies abertos
+            lobby join <Código>                 → Entrar num lobby
+            lobby leave                         → Sair do lobby actual
+            lobby start                         → Iniciar o jogo (só o host)
+            lobby status                        → Ver quem está pronto
+            ready                               → Marcar-se como pronto
+            unready                             → Retirar estado de pronto
+        """)
+
+
+    async def _lobby_sync_loop(self):
+        """
+        Corre em background e monitoriza o estado do lobby na DHT.
+        Quando o host muda para 'started', activa a fase ACTIVE.
+        """
+        while True:
+            await asyncio.sleep(3)
+            if not self.lobby.current_lobby:
+                continue
+            try:
+                from kademlia.network import Server as _KS
+                raw = await self.lobby.kad.get(
+                    __import__("dht_keys", fromlist=["lobby_meta_key"]).lobby_meta_key(
+                        self.lobby.current_lobby
+                    )
+                )
+                if not raw:
+                    continue
+                import json
+                meta = json.loads(raw)
+                if meta.get("status") == "started":
+                    from game_state import MatchPhase
+                    if self.state.phase != MatchPhase.ACTIVE:
+                        self.state.phase = MatchPhase.ACTIVE
+                        self.state.log_event("🎮 O host iniciou o jogo!")
+                elif meta.get("status") == "abandoned":
+                    self.lobby.current_lobby = None
+                    self.state.log_event("[Lobby] O host saiu — lobby encerrado.")
+            except Exception:
+                pass
+
     async def input_loop(self):
         """
+        Comandos de lobby:
+            lobby create <name> <maxPlayers>
+            lobby list
+            lobby join <Code>
+            lobby leave
+            lobby start
+            lobby status
+            ready
+            unready
+
         Comandos:
           a <user>         → atacar
           m w/a/s/d        → mover
@@ -489,16 +572,18 @@ class GameNode:
         self.state.local.x, self.state.local.y = x, y
 
         # ── Auto-start da partida ──────────────────────────────────
-        self.state.phase      = MatchPhase.ACTIVE
-        self.state.start_time = time.time()
-        self.state.match_id   = self.state.local.match_id
+        if self.state.phase != MatchPhase.ACTIVE:
+            self.state.phase      = MatchPhase.ACTIVE
+            self.state.start_time = time.time()
+            self.state.match_id   = self.state.local.match_id
+            await self._broadcast_event(game_pb2.GameEvent.MATCH_STARTED)
 
-        # Avisar os outros que a partida está em curso
-        await self._broadcast_event(game_pb2.GameEvent.MATCH_STARTED)
+
         await self.broadcast_state()
 
         self._reader.start()
         render_task = asyncio.create_task(self._render_loop())
+        sync_task = asyncio.create_task(self._lobby_sync_loop())
 
         try:
             while True:
@@ -539,6 +624,62 @@ class GameNode:
                     for uname, k, d in self.state.scoreboard():
                         self.state.log_event(f"  {uname}: {k}K / {d}D")
 
+                elif cmd == "lobby": 
+                    if len(parts) < 2: 
+                        self._print_lobby_help()
+                        continue
+
+                    sub_cmd = parts[1].lower()
+
+                    if sub_cmd == "create": 
+                        if len(parts) < 4:
+                            print("Uso: lobby create <nome> <maxJogadores>")
+                            continue
+                            
+                        name = parts[2]
+                        
+                        try: 
+                            max_players = int(parts[3])
+                        except ValueError: 
+                            print("[!] maxJogadores deve ser um número inteiro.")
+                            continue
+                        my_addr = f"{self.host}:{self.grpc_port}"
+                        await self.lobby.create(name, max_players, my_addr)
+                    
+                    elif sub_cmd == "list": 
+                        await self.lobby.list_open()
+                    
+                    elif sub_cmd == "join": 
+                        if len(parts) < 3:
+                            print("Uso: /lobby join <Código>")
+                            continue
+                        my_addr = f"{self.host}:{self.grpc_port}"
+                        await self.lobby.join(parts[2].upper(), my_addr)
+                    
+                    elif sub_cmd == "leave": 
+                        await self.lobby.leave()
+                    
+                    elif sub_cmd == "start": 
+                        ok = await self.lobby.start() 
+
+                        if ok: 
+                            self.state.phase = __import__(
+                                "game_state", fromlist=["MatchPhase"]
+                            ).MatchPhase.ACTIVE
+                            self.state.log_event("🎮 Jogo iniciado pelo host!")
+                    
+                    elif sub_cmd == "status": 
+                        await self.lobby.status()
+
+                    else: 
+                        self._print_lobby_help()
+
+                elif cmd == "ready": 
+                    await self.lobby.set_ready(True)
+                
+                elif cmd == "unready": 
+                    await self.lobby.set_ready(False)
+                        
                 else:
                     self.state.log_event(
                         "[!] Comandos: a <user> | m w/a/s/d | 1/2 [user] | s | q"
@@ -546,7 +687,9 @@ class GameNode:
 
         finally:
             render_task.cancel()
+            sync_task.cancel()
             self._reader.stop()
+
 
     # ── MATCH END / RESET ─────────────────────────────────────────
 

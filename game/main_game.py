@@ -18,12 +18,13 @@ Uso:
 
 Classes disponíveis: fighter, wizard, rogue, cleric, ranger
 
-Menu inicial
-────────────
-  class <nome>   — mudar de classe
-  info           — ver detalhes da classe actual
-  join           — entrar no jogo (limpa o ecrã e inicia)
-  quit / q       — sair
+Fluxo completo:
+  1. Menu  →  escolher classe
+  2. Menu  →  lobby create <nome> <max>   ou   lobby join <código>
+  3. Menu  →  ready  (quando prontos)
+  4. Menu  →  lobby start  (só o host; arranca o jogo para toda a gente)
+  5. Jogo
+
 """
 
 import asyncio
@@ -38,6 +39,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dnd_classes import CLASSES, get_class, list_classes, DnDClass
 from game_node   import GameNode
 
+import logging
+
 
 # ── CORES ANSI (usadas só no menu) ────────────────────────────────
 
@@ -48,7 +51,7 @@ _C  = "\033[36m"
 _G  = "\033[32m"
 _RE = "\033[31m"
 _D  = "\033[2m"
-
+_M  = "\033[35m"
 
 # ── MENU ──────────────────────────────────────────────────────────
 
@@ -68,7 +71,7 @@ def _clear():
     sys.stdout.flush()
 
 
-def _render_menu(username: str, current_class: DnDClass | None):
+def _render_menu(username: str, current_class: DnDClass | None, lobby_code: str | None):
     """Redesenha o menu completo."""
     _clear()
     print(BANNER)
@@ -89,6 +92,19 @@ def _render_menu(username: str, current_class: DnDClass | None):
     else:
         print(f"  Classe  : {_RE}(nenhuma — usa 'class <nome>' para escolher){_R}")
 
+    if lobby_code:
+        print(f"\n  {_M}Lobby activo : {_B}{lobby_code}{_R}")
+        print(
+            f"  {_D}  ready · unready · lobby status · lobby leave{_R}\n"
+            f"  {_D}  lobby start  (só o host, quando todos prontos){_R}"
+        )
+    else:
+        print(
+            f"\n  {_M}🎮 Lobbies{_R}\n"
+            f"  {_D}  lobby create <nome> <max>   · lobby join <código>{_R}\n"
+            f"  {_D}  lobby list{_R}"
+        )
+
     print()
     print(list_classes())
     print(
@@ -103,60 +119,57 @@ def _render_menu(username: str, current_class: DnDClass | None):
 async def run_menu(
     username: str,
     initial_class_name: str | None,
+    node: "GameNode",
 ) -> DnDClass | None:
     """
     Menu interactivo antes de entrar no jogo.
-    Devolve a DnDClass escolhida, ou None se o utilizador saiu.
-
-    Usa aioconsole.ainput (stdin normal) — o InputReader só é activado
-    depois de entrar no jogo.
+ 
+    Devolve a DnDClass escolhida quando o jogo deve começar,
+    ou None se o utilizador saiu.
     """
     current_class: DnDClass | None = get_class(initial_class_name) if initial_class_name else None
-    _render_menu(username, current_class)
-
+    _render_menu(username, current_class, node.lobby.current_lobby)
+ 
     while True:
         try:
             raw = await aioconsole.ainput(f"{_B}menu{_R}> ")
         except (EOFError, KeyboardInterrupt):
             return None
-
+ 
         parts = raw.strip().split()
         if not parts:
-            _render_menu(username, current_class)
+            _render_menu(username, current_class, node.lobby.current_lobby)
             continue
-
+ 
         cmd = parts[0].lower()
-
-        # ── quit ──────────────────────────────────────────────
+ 
+        # ── quit ──────────────────────────────────────────────────
         if cmd in ("quit", "q", "exit"):
             print("\nAté à próxima!")
             return None
-
-        # ── class <nome> ──────────────────────────────────────
+ 
+        # ── class <nome> ──────────────────────────────────────────
         elif cmd == "class":
             if len(parts) < 2:
                 print(f"  {_RE}[!]{_R} Uso: class <nome>  (ex: class fighter)")
                 continue
-            name = parts[1].lower()
-            c = get_class(name)
+            c = get_class(parts[1].lower())
             if c:
                 current_class = c
-                _render_menu(username, current_class)
+                _render_menu(username, current_class, node.lobby.current_lobby)
                 print(f"  {_G}✓{_R} Classe definida para {_B}{c.name}{_R}")
             else:
-                available = ", ".join(CLASSES.keys())
-                print(f"  {_RE}[!]{_R} Classe '{name}' desconhecida.  Disponíveis: {available}")
-
-        # ── info ──────────────────────────────────────────────
+                print(f"  {_RE}[!]{_R} Classe desconhecida. Disponíveis: {', '.join(CLASSES)}")
+ 
+        # ── info ──────────────────────────────────────────────────
         elif cmd == "info":
             if not current_class:
                 print(f"  {_RE}[!]{_R} Sem classe seleccionada.")
             else:
+                print(f"\n  {_B}{current_class.name}{_R}")
                 print(
-                    f"\n  {_B}{current_class.name}{_R}\n"
                     f"  HP {current_class.hp_base}  AC {current_class.armor_class_base}  "
-                    f"Arma: {current_class.weapon}  "
-                    f"Dano: {current_class.damage_dice} {current_class.damage_type}\n"
+                    f"Arma: {current_class.weapon}  Dano: {current_class.damage_dice} {current_class.damage_type}\n"
                     f"  Ataque mod: +{current_class.attack_modifier}  "
                     f"Dano mod: +{current_class.damage_modifier}\n"
                 )
@@ -165,21 +178,114 @@ async def run_menu(
                     cd    = f"  cooldown {ab.cooldown_secs}t" if ab.cooldown_secs else "  sempre disponível"
                     print(f"  • {_B}{ab.name}{_R}{spell}  —  {ab.description}{_D}{cd}{_R}")
                 print()
-
-        # ── join ──────────────────────────────────────────────
+ 
+        elif cmd == "lobby":
+            if len(parts) < 2:
+                print(
+                    f"  Subcomandos de lobby:\n"
+                    f"    lobby create <nome> <max>   — criar lobby\n"
+                    f"    lobby join <código>          — entrar num lobby\n"
+                    f"    lobby list                   — ver lobbies abertos\n"
+                    f"    lobby leave                  — sair do lobby\n"
+                    f"    lobby status                 — ver quem está pronto\n"
+                    f"    lobby start                  — iniciar (só o host)\n"
+                )
+                continue
+ 
+            sub = parts[1].lower()
+            my_addr = f"{node.host}:{node.grpc_port}"
+ 
+            if sub == "create":
+                if not current_class:
+                    print(f"  {_RE}[!]{_R} Escolhe uma classe antes de criar um lobby.")
+                    continue
+                if len(parts) < 4:
+                    print("  Uso: lobby create <nome> <maxJogadores>")
+                    continue
+                try:
+                    max_p = int(parts[3])
+                except ValueError:
+                    print("  [!] maxJogadores deve ser um número inteiro.")
+                    continue
+                await node.lobby.create(parts[2], max_p, my_addr)
+                _render_menu(username, current_class, node.lobby.current_lobby)
+ 
+            elif sub == "join":
+                if not current_class:
+                    print(f"  {_RE}[!]{_R} Escolhe uma classe antes de entrar num lobby.")
+                    continue
+                if len(parts) < 3:
+                    print("  Uso: lobby join <código>")
+                    continue
+                await node.lobby.join(parts[2].upper(), my_addr)
+                _render_menu(username, current_class, node.lobby.current_lobby)
+ 
+            elif sub == "list":
+                await node.lobby.list_open()
+ 
+            elif sub == "leave":
+                await node.lobby.leave()
+                _render_menu(username, current_class, node.lobby.current_lobby)
+ 
+            elif sub == "status":
+                await node.lobby.status()
+ 
+            elif sub == "start":
+                # Quando o host faz start, os non-hosts ficam a saber via:
+                #   1. LobbyNotification gRPC (imediato)
+                #   2. sync_loop a correr em background (polling DHT de 3 em 3s)
+                # Em ambos os casos, o menu deles recebe sinal para avançar.
+                if not current_class:
+                    print(f"  {_RE}[!]{_R} Escolhe uma classe primeiro.")
+                    continue
+                ok = await node.lobby.start()
+                if ok:
+                    # Host avança directamente para o jogo
+                    return current_class
+ 
+            else:
+                print(f"  {_RE}[!]{_R} Subcomando desconhecido: '{sub}'")
+ 
+        
+        elif cmd == "ready":
+            await node.lobby.set_ready(True)
+ 
+        elif cmd == "unready":
+            await node.lobby.set_ready(False)
+ 
+        # ── join (modo directo, sem lobby) ────────────────────────
         elif cmd == "join":
             if not current_class:
                 print(f"  {_RE}[!]{_R} Escolhe uma classe primeiro: class <nome>")
                 continue
             _clear()
             return current_class
-
-        # ── desconhecido ──────────────────────────────────────
+ 
+        # ── desconhecido ──────────────────────────────────────────
         else:
             print(
                 f"  {_RE}[!]{_R} Comando desconhecido. "
-                f"Usa: class <nome> | info | join | quit"
+                f"Usa: class | info | lobby ... | ready | join | quit"
             )
+ 
+        if node.lobby.current_lobby:
+            import json
+            try:
+                from dht_keys import lobby_meta_key
+                raw_meta = await node.lobby.kad.get(
+                    lobby_meta_key(node.lobby.current_lobby)
+                )
+                if raw_meta:
+                    meta = json.loads(raw_meta)
+                    if meta.get("status") == "started" and current_class:
+                        print(
+                            f"\n  {_G}[Lobby] O jogo foi iniciado! A entrar…{_R}"
+                        )
+                        await asyncio.sleep(1)
+                        return current_class
+            except Exception:
+                pass
+
 
 
 # ── ARGS ──────────────────────────────────────────────────────────
@@ -212,31 +318,70 @@ def parse_args():
 
 async def main():
     args = parse_args()
-
-    # Menu interactivo — devolve a classe escolhida ou None (sair)
-    chosen_class = await run_menu(args.username, args.dnd_class)
-    if chosen_class is None:
-        return
-
+ 
     bootstrap = None
     if args.bootstrap_host and args.bootstrap_kad_port:
         bootstrap = (args.bootstrap_host, args.bootstrap_kad_port)
-
-    print(
-        f"A iniciar {args.username} ({chosen_class.name}) "
-        f"na porta gRPC {args.grpc_port} / Kad {args.kad_port}…\n"
-    )
-
+ 
+    # O GameNode é criado e a infra (Kademlia + gRPC) é arrancada ANTES do menu,
+    # de forma a que os comandos de lobby no menu possam comunicar com a DHT.
+    # Usamos uma classe placeholder; a classe real é injectada abaixo.
+    placeholder_class = get_class(args.dnd_class) or get_class("fighter")
+ 
     node = GameNode(
         username=args.username,
-        dnd_class=chosen_class,
+        dnd_class=placeholder_class,
         host=args.host,
         grpc_port=args.grpc_port,
         kad_port=args.kad_port,
         bootstrap=bootstrap,
         match_id=args.match_id,
     )
-    await node.run()
+ 
+    logging.getLogger("kademlia").setLevel(logging.ERROR)
+ 
+    await node.start_kademlia()
+    await node.start_grpc_server()
+    await node.register_self()
+    asyncio.create_task(node._refresh_loop())
+ 
+    chosen_class = await run_menu(args.username, args.dnd_class, node)
+    if chosen_class is None:
+        if node.grpc_server:
+            await node.grpc_server.stop(grace=2)
+        return
+ 
+    # Actualizar a classe do jogador com a escolha final do menu
+    node.state.local.dnd_class = chosen_class
+    node.state.local.hp        = chosen_class.hp_base
+ 
+    # Se viemos de um lobby, sincronizar a fase e o match_id antes de entrar
+    # no input_loop, para que o broadcast de MATCH_STARTED não seja redundante
+    # com o que o lobby já anunciou, e para que o timer de partida esteja certo.
+    if node.lobby.current_lobby:
+        import time
+        from game_state import MatchPhase
+        node.state.phase      = MatchPhase.ACTIVE
+        node.state.start_time = time.time()
+        node.state.match_id   = node.lobby.current_lobby
+ 
+    await node.input_loop()
+ 
+    # Notificar peers da saída
+    import game_pb2
+    leave_req = game_pb2.LeaveNotification(username=args.username)
+    tasks = [
+        node._send(p["grpc_addr"], lambda s, r: s.Leave(r), leave_req)
+        for nid, p in node.peers.items()
+        if nid != node.node_id
+    ]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+ 
+    if node.grpc_server:
+        await node.grpc_server.stop(grace=2)
+    print("\n[Jogo] Saíste. Até à próxima!")
+
 
 
 if __name__ == "__main__":
