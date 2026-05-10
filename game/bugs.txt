@@ -4,7 +4,7 @@
   - also lobby tem que sincronizar o tempo de partida quando alguém entra. após uma partida terminar, tudo em sintonia, 
     mas se alguém se junta a meio eles ficam com match timer diferente
 - mais classes, features e balanceamento
-  - há mais classes em dnd, podemos meter mais algumas, e mais algumas habilidades
+  - há mais classes em dnd, podemos meter mais algumas, e mais algumas habilidades -> done
   - mapa pode ter obstáculos (paredes) que influenciam se alguem chega a outra pessoa -> farias se ele quiser
   - após tipo 3 kills, recebem uma poção de cura ? (da mesma forma que o CS2 faz) -> faria se ele quiser
   - precisa de ser balanceado, wizard é OP -> done
