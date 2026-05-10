@@ -79,13 +79,17 @@ class GameNode:
             print("[DHT] Primeiro node (bootstrap).")
 
         self.state.local.node_id = self.node_id
-        self.lobby.node_id = self.node_id
+
+        # em start_kademlia, após as duas linhas de atribuição:
+        print(f"[DEBUG] node_id após listen: '{self.node_id}'")
+        print(f"[DEBUG] lobby.node_id após atribuição: '{self.lobby.node_id}'")
 
     async def register_self(self):
         addr = f"{self.host}:{self.grpc_port}"
         await self.kad.set(addr_key(self.node_id), addr)
         await self.kad.set(username_key(self.username), self.node_id)
         self.peers[self.node_id] = {
+            "node_id":    self.node_id, 
             "username":   self.username,
             "grpc_addr":  addr,
             "last_seen":  time.time(),
@@ -99,13 +103,14 @@ class GameNode:
         for n in neighbors:
             if (n.ip, n.port) == (self.host, self.kad_port):
                 continue
-            if n.id.hex() in self.peers:
+            nid = n.id.hex()
+            if nid in self.peers:
                 continue
-            addr = await self.kad.get(addr_key(n.id.hex()))
+            addr = await self.kad.get(addr_key(nid))
             if addr:
-                await self._handshake(addr)
+                await self._handshake(addr, remote_node_id=nid)
 
-    async def _handshake(self, addr: str):
+    async def _handshake(self, addr: str, remote_node_id: str = ""):
         host, port = addr.split(":")
         try:
             async with grpc.aio.insecure_channel(f"{host}:{port}") as ch:
@@ -114,8 +119,10 @@ class GameNode:
                     stub.Ping(game_pb2.PingRequest(from_user=self.node_id)),
                     timeout=2.0,
                 )
-                if resp.username not in self.peers:
-                    self.peers[resp.username] = {
+                key = remote_node_id if remote_node_id else resp.username
+                if key not in self.peers:
+                    self.peers[key] = {
+                        "node_id":    remote_node_id,
                         "username":   resp.username,
                         "grpc_addr":  addr,
                         "last_seen":  time.time(),

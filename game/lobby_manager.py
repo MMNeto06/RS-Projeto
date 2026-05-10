@@ -53,7 +53,6 @@ class LobbyManager:
 
     def __init__(self, kad, node_id: str, username: str, peers: dict, send_fn):
         self.kad      = kad
-        self.node_id  = node_id
         self.username = username
         self.peers    = peers
         self._send    = send_fn 
@@ -62,12 +61,28 @@ class LobbyManager:
         self._ready = False
         self._is_host  = False 
         self._host_addr: str | None = None
+        self._lobby_state: dict | None = None
+        self._local_lobby_cache: dict[str, dict] = {} 
+
+    @property
+    def node_id(self) -> str:
+        """
+        Lê o node_id directamente do objecto Kademlia em tempo real.
+        Evita o problema de ficar desactualizado ("") quando o LobbyManager
+        é construído antes do kad.listen() ter corrido.
+        """
+        try:
+            return self.kad.node.id.hex()
+        except AttributeError:
+            return ""
+
 
     # ── CRIAR ──────────────────────────────────────────────────────
 
     def _generate_code(self) -> str:
         raw = f"{self.node_id}{time.time()}"
         return hashlib.sha256(raw.encode()).hexdigest()[:6].upper()
+    
     
     def _make_member_info(self, grpc_addr: str = "") -> dict:
         return {
@@ -80,7 +95,6 @@ class LobbyManager:
 
 
     async def create(self, name: str, max_players: int, my_grpc_addr: str) -> str:
-        """Cria um novo lobby e anuncia-o na DHT. Devolve o código."""
         code = self._generate_code()
 
         lobby_meta = {
@@ -93,20 +107,21 @@ class LobbyManager:
             "created_at":     time.time(),
         }
 
-        member_info = self._make_member_info()
+        member_info = self._make_member_info(grpc_addr=my_grpc_addr)
  
         await self.kad.set(lobby_meta_key(code), json.dumps(lobby_meta))
         await self.kad.set(lobby_member_key(code, self.node_id),
                            json.dumps(member_info))
         await self.kad.set(lobby_index_key(code), "1")
-        await self.kad.set(peer_lobby_key(self.node_id), json.dumps({
-            "code":            code,
-            "name":            name,
-            "max_players":     max_players,
+        lobby_info = {
+            "code": code, "name": name,
+            "max_players": max_players,
             "current_players": 1,
-            "status":          "open",
-            "host_addr":       my_grpc_addr,
-        }))
+            "status": "open",
+            "host_addr": my_grpc_addr,
+        }
+        await self.kad.set(peer_lobby_key(self.node_id), json.dumps(lobby_info))
+        self._local_lobby_cache[self.node_id] = lobby_info 
  
         self.current_lobby = code
         self._ready        = False
@@ -122,18 +137,18 @@ class LobbyManager:
     # ── LISTAR ─────────────────────────────────────────────────────
 
     async def list_open(self):
-        """Imprime os lobbies abertos conhecidos pelos peers actuais."""
         lobbies: list[dict] = []
- 
-        fetch_tasks = [
-            self.kad.get(peer_lobby_key(node_id))
-            for node_id in self.peers
-        ]
+        all_ids = set(self.peers.keys()) | {self.node_id}
 
+        fetch_tasks = [self.kad.get(peer_lobby_key(nid)) for nid in all_ids]
         results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
- 
-        for raw in results:
+
+        for nid, raw in zip(all_ids, results):
+            # Se a DHT falhou, tenta a cache local
             if not raw or isinstance(raw, Exception):
+                raw = json.dumps(self._local_lobby_cache[nid]) \
+                    if nid in self._local_lobby_cache else None
+            if not raw:
                 continue
             try:
                 lobby = json.loads(raw)
@@ -215,7 +230,8 @@ class LobbyManager:
         self.current_lobby = code
         self._ready        = False
         self._is_host      = False
-        self._host_addr    = meta.get("host_addr")
+        self._host_addr    = meta.get("host_addr")  
+        self._lobby_state  = meta
  
         print(f"[Lobby] Entraste no lobby \033[1m{code}\033[0m — {meta['name']}")
         print(f"[Lobby] Usa /ready quando estiveres pronto.")
@@ -318,32 +334,33 @@ class LobbyManager:
 
     # ── LOBBY STATUS ──────────────────────────────────────
 
+
     async def _fetch_members(self, code: str) -> list[dict]:
-        """Busca todos os membros activos de um lobby."""
         members: list[dict] = []
-        # Iterar sobre os peers conhecidos + nós próprios
         candidate_ids = set(self.peers.keys()) | {self.node_id}
-        tasks = [
-            self.kad.get(lobby_member_key(code, nid))
-            for nid in candidate_ids
-        ]
+        tasks = [self.kad.get(lobby_member_key(code, nid)) for nid in candidate_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for raw in results:
             if not raw or isinstance(raw, Exception):
                 continue
             try:
                 m = json.loads(raw)
-                if m:   # tombstones são strings vazias
+                if m:
                     members.append(m)
             except (json.JSONDecodeError, TypeError):
                 pass
+        
         return members
-
+    
     def _get_owner_id(self) -> str | None:
-        """Tenta obter o owner_id a partir do lobby_meta em cache (best-effort)."""
-        # Este valor é preenchido assincronamente; não bloqueamos aqui.
-        return None   # sobrescrito quando necessário
+        """Devolve o node_id do owner. Se formos o host, sabemos logo."""
+        if self._is_host:
+            return self.node_id
+        if self._lobby_state:
+            return self._lobby_state.get("owner")
+        return None
 
+    
     async def status(self):
         """Mostra quem está no lobby e o estado de ready de cada um."""
         if not self.current_lobby:
@@ -453,8 +470,8 @@ class LobbyManager:
         Devolve True se o host aprovou.
         """
         if not self._host_addr:
-            # Sem host conhecido, deixar passar (fallback permissivo)
-            return True
+            print("[Lobby] Host desconhecido — ataque bloqueado por segurança.")
+            return False
  
         try:
             val_req = game_pb2.ValidateAttackRequest(
