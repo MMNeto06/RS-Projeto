@@ -210,7 +210,144 @@ CLASSES: dict[str, DnDClass] = {
             ),
         ],
     ),
+
+    # ── SORCERER ──────────────────────────────────────────────────
+    # Variação do Wizard: mais HP, ataque base ranged útil (Eldritch Blast),
+    # spells caóticas e frequentes. Sem o poderio de Fireball, mas muito mais
+    # sustentado. Twinned Spell duplica o próximo ataque básico.
+    "sorcerer": DnDClass(
+        name="Sorcerer",
+        hp_base=36,
+        armor_class_base=12,
+        weapon="Eldritch Blast",
+        damage_dice="1d8",          # 1–8 + 1 = 2–9; cantrip ranged sempre utilizável
+        attack_modifier=3,
+        damage_modifier=1,
+        attack_range=5,             # range médio — preenche lacuna entre melee e Wizard
+        abilities=[
+            Ability(
+                "Chaos Bolt",
+                "3d6 auto-acerto caótico [uso: 1 <user>]",
+                cooldown_secs=15,
+                is_spell=True,
+                ability_range=7,
+            ),
+            Ability(
+                "Twinned Spell",
+                "Próximo ataque básico dispara duas vezes (+1d8)",
+                cooldown_secs=22,
+                is_spell=True,
+            ),
+            Ability(
+                "Wild Magic Surge",
+                "5d4 auto-acerto de magia selvagem [uso: 3 <user>]",
+                cooldown_secs=55,
+                is_spell=True,
+                ability_range=6,
+            ),
+        ],
+    ),
+
+    # ── PALADIN ───────────────────────────────────────────────────
+    # O tanque com maior AC do jogo (17). Dano base sólido (2d6+4).
+    # Divine Smite é o maior burst single-hit possível (+4d6), mas com cooldown
+    # longo. Lay on Hands é o heal fixo mais alto do jogo. Joga lentamente.
+    "paladin": DnDClass(
+        name="Paladin",
+        hp_base=52,
+        armor_class_base=17,
+        weapon="Warhammer",
+        damage_dice="2d6",          # 2–12 + 4 = 6–16; dano base alto
+        attack_modifier=4,
+        damage_modifier=4,
+        attack_range=1,
+        abilities=[
+            Ability(
+                "Divine Smite",
+                "Próximo ataque +4d6 dano radiante",
+                cooldown_secs=38,
+                is_spell=True,
+            ),
+            Ability("Lay on Hands",      "Cura 25 HP fixo",      cooldown_secs=50),
+            Ability("Aura of Protection","AC+3 durante 15s",     cooldown_secs=60),
+        ],
+    ),
+
+    # ── MONK ──────────────────────────────────────────────────────
+    # O mais veloz em melee. Flurry of Blows (3 hits auto-acerto) é o maior
+    # DPS por janela de tempo do jogo se bem encadeado. Sem armadura pesada,
+    # compensa com Patient Defense. Ki Blast dá opção ranged curta.
+    "monk": DnDClass(
+        name="Monk",
+        hp_base=42,
+        armor_class_base=15,
+        weapon="Unarmed Strike",
+        damage_dice="1d6",          # 1–6 + 2 = 3–8; soco simples
+        attack_modifier=6,
+        damage_modifier=2,
+        attack_range=1,
+        abilities=[
+            Ability(
+                "Flurry of Blows",
+                "3 golpes auto-acerto 1d4+1 [uso: 1 <user>]",
+                cooldown_secs=12,
+                ability_range=1,
+            ),
+            Ability("Patient Defense", "AC+3 durante 10s",       cooldown_secs=18),
+            Ability(
+                "Ki Blast",
+                "2d8 auto-acerto de ki [uso: 3 <user>]",
+                cooldown_secs=28,
+                ability_range=3,
+            ),
+        ],
+    ),
+
+    # ── WARLOCK ───────────────────────────────────────────────────
+    # Mistura de Rogue e Wizard. Dagger em melee, Eldritch Blast a longa
+    # distância. Hex amplifica todos os ataques durante 25s (+1d6 cada).
+    # Life Drain rouba HP do alvo — único sustain ofensivo do jogo.
+    "warlock": DnDClass(
+        name="Warlock",
+        hp_base=32,
+        armor_class_base=13,
+        weapon="Dagger",
+        damage_dice="1d6",          # 1–6 + 2 = 3–8; rápida mas fraca sem Hex
+        attack_modifier=5,
+        damage_modifier=2,
+        attack_range=1,
+        abilities=[
+            Ability(
+                "Hex",
+                "+1d6 nec. em cada ataque durante 25s [uso: 1 <user>]",
+                cooldown_secs=22,
+                is_spell=True,
+            ),
+            Ability(
+                "Eldritch Blast",
+                "2d8 auto-acerto de força [uso: 2 <user>]",
+                cooldown_secs=12,
+                is_spell=True,
+                ability_range=8,
+            ),
+            Ability(
+                "Life Drain",
+                "2d6 auto-acerto; cura metade do dano [uso: 3 <user>]",
+                cooldown_secs=30,
+                is_spell=True,
+                ability_range=1,
+            ),
+        ],
+    ),
 }
+
+
+
+    # ── SORCERER ──────────────────────────────────────────────────
+    # Variação do Wizard: mais HP, ataque base ranged útil (Eldritch Blast),
+    # spells caóticas e frequentes. Sem o poderio de Fireball, mas muito mais
+    # sustentado. Twinned Spell duplica o próximo ataque básico.
+    
 
 
 def get_class(name: str) -> DnDClass | None:

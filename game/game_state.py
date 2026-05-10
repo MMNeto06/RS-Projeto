@@ -69,6 +69,10 @@ class LocalPlayer:
             return max(base, 13)
         if self.is_effect_active("fortified"):
             return base + 2
+        if self.is_effect_active("patient_defense"):
+            return base + 3
+        if self.is_effect_active("aura_of_protection"):
+            return base + 3
         return base
 
     # ── COOLDOWNS ─────────────────────────────────────────────────
@@ -98,15 +102,21 @@ class LocalPlayer:
         """Remove efeitos expirados e limpa o status_effects correspondente."""
         now = time.time()
         _labels = {
-            "mage_armor":   "Mage Armor",
-            "disengaged":   "Disengaged",
-            "sneak_attack": "Sneak Attack↑",
-            "action_surge": "+2d8 Surge↑",
-            "hunters_mark": "Hunter's Mark",
-            "fortified":    "Fortified",
-            "cheap_shot":   "Cheap Shot↑",
-            "blessed":      "Blessed",
-            "eagle_eye":    "Eagle Eye",
+            "mage_armor":        "Mage Armor",
+            "disengaged":        "Disengaged",
+            "sneak_attack":      "Sneak Attack↑",
+            "action_surge":      "+2d8 Surge↑",
+            "hunters_mark":      "Hunter's Mark",
+            "fortified":         "Fortified",
+            "cheap_shot":        "Cheap Shot↑",
+            "blessed":           "Blessed",
+            "eagle_eye":         "Eagle Eye",
+            # novas classes
+            "twinned_spell":     "Twinned↑",
+            "divine_smite":      "Divine Smite↑",
+            "aura_of_protection":"Aura +3AC",
+            "patient_defense":   "Patient Defense",
+            "hex_mark":          "Hex",
         }
         expired = [k for k, v in self.active_effects.items() if now >= v]
         for k in expired:
@@ -114,8 +124,8 @@ class LocalPlayer:
             if label and label in self.status_effects:
                 self.status_effects.remove(label)
             del self.active_effects[k]
-        # Se Hunter's Mark expirou, limpa o alvo
-        if not self.is_effect_active("hunters_mark"):
+        # Se Hunter's Mark ou Hex expiraram, limpa o alvo marcado
+        if not self.is_effect_active("hunters_mark") and not self.is_effect_active("hex_mark"):
             self.marked_target = ""
 
     # ── DANO / CURA ───────────────────────────────────────────────
