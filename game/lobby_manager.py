@@ -25,6 +25,28 @@ from dht_keys import (
 import game_pb2
 import game_pb2_grpc
 
+"""
+para futuro
+MAX_DAMAGE_PER_HIT = {
+    # normal                  ability
+    "fighter": 27,          # 43 com Action Surge (+2d8)
+    "wizard":  30,          # Fireball 5d6; Magic Missile max=15
+    "rogue":   26,          # 2d6+2 + 2d6 (Sneak Attack)
+    "cleric":  14,          # melee 2d6+2; Sacred Flame max=8
+    "ranger":  17,          # 1d8+3 + 1d6 (Hunter's Mark)
+}
+
+# Pico absoluto por classe (inclui abilidades de amplificação)
+MAX_DAMAGE_ABSOLUTE = {
+    "fighter": 43,   # Action Surge: 3d8+3 + 2d8 = max 43
+    "wizard":  30,   # Fireball: 5d6
+    "rogue":   26,   # Sneak Attack + normal: 4d6+2
+    "cleric":  14,   # melee normal (Sacred Flame é só 8)
+    "ranger":  17,   # Hunter's Mark activo: 1d8 + 1d6 + 3
+}
+"""
+
+
 # ── Limites de dano por classe (usados pelo host na validação) ────────────────
 # Valores máximos teóricos por ataque (incluindo bónus de abilidades)
 MAX_DAMAGE_BY_CLASS: dict[str, int] = {

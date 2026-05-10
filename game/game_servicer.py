@@ -11,6 +11,11 @@ import game_pb2_grpc
 from game_state import GameState, MatchPhase, RemotePlayer
 
 
+def _chebyshev(x1: int, y1: int, x2: int, y2: int) -> int:
+    """Distância de Chebyshev entre dois pontos num grid (max de |dx|, |dy|)."""
+    return max(abs(x1 - x2), abs(y1 - y2))
+
+
 class GameServicer(game_pb2_grpc.GameServiceServicer):
 
     def __init__(self, state: GameState, node):
@@ -69,7 +74,25 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                 target_hp_remaining=local.hp, target_died=False,
             )
 
-        # Disengage — o jogador local está imune
+        # ── Validação de range (segunda linha de defesa) ───────────
+        # O check principal acontece no atacante (game_node), mas validamos
+        # aqui também com a posição que o atacante declarou.
+        if request.effective_range > 0:
+            dist = _chebyshev(
+                request.attacker_x, request.attacker_y,
+                local.x, local.y,
+            )
+            if dist > request.effective_range:
+                self.state.log_event(
+                    f"{request.attacker} tentou atacar fora de alcance "
+                    f"(dist={dist}, range={request.effective_range}) — \033[33mrejeitado.\033[0m"
+                )
+                return game_pb2.AttackResult(
+                    hit=False, damage_dealt=0,
+                    target_hp_remaining=local.hp, target_died=False,
+                )
+
+        # ── Disengage — o jogador local está imune ─────────────────
         if local.is_effect_active("disengaged"):
             self.state.log_event(
                 f"{request.attacker} tentou atacar — \033[32mDesviaste (Disengage)!\033[0m"
@@ -79,7 +102,8 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                 target_hp_remaining=local.hp, target_died=False,
             )
 
-        # attack_roll=999 significa auto-acerto (Magic Missile, Sacred Flame)
+        # attack_roll=999 significa auto-acerto (Magic Missile, Sacred Flame, Cheap Shot)
+        # Ray of Frost do Wizard usa o roll normal (attack_modifier=4, range=4)
         hit = (request.attack_roll == 999) or (request.attack_roll >= local.armor_class)
 
         damage = 0
@@ -134,7 +158,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             self.state.log_event(f"💀 \033[31m{request.payload}\033[0m morreu!")
 
         elif request.type == GameEvent.MATCH_STARTED:
-            # Sincroniza o timer com o autor do evento
             if self.state.phase != MatchPhase.ACTIVE:
                 self.state.phase      = MatchPhase.ACTIVE
                 self.state.match_id   = request.match_id
@@ -148,7 +171,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             )
 
         elif request.type == GameEvent.MATCH_RESET:
-            # Repõe o estado local para nova partida
             x, y = self.state.random_spawn()
             self.state.local.reset_for_new_match(x, y)
             self.state.reset_others_for_new_match()
@@ -158,38 +180,33 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             await self.node.broadcast_state()
 
         return game_pb2.Ack(received=True, by=self.state.local.username)
-    
+
+    # ── VALIDATE ATTACK ───────────────────────────────────────────
+
     async def ValidateAttack(self, request, context):
-        """
-        Chamado pelo atacante antes de enviar o ataque ao alvo.
-        Só o host do lobby processa este RPC de forma útil —
-        nos outros nodes, devolve sempre aprovado (fallback seguro).
-        """
         if not self.node.lobby._is_host:
             return game_pb2.ValidateAttackResponse(approved=True, reason="not host")
- 
+
         approved, reason = self.node.lobby.validate_attack(
             attacker_class=request.attacker_class,
             damage=request.damage,
             weapon=request.weapon,
             is_spell=request.is_spell,
         )
- 
+
         if not approved:
             self.state.log_event(
                 f"[Host] ⚠ Ataque rejeitado de \033[31m{request.attacker}\033[0m "
                 f"({request.attacker_class}): {reason}"
             )
- 
+
         return game_pb2.ValidateAttackResponse(approved=approved, reason=reason)
-    
+
+    # ── LOBBY NOTIFY ──────────────────────────────────────────────
+
     async def LobbyNotify(self, request, context):
-        """
-        Recebe notificações de lobby enviadas por outros peers
-        (entrou, saiu, ficou pronto, etc.) e mostra-as no terminal.
-        """
         Type = game_pb2.LobbyNotification.Type
- 
+
         if request.type == Type.PLAYER_JOINED:
             self.state.log_event(
                 f"\033[32m{request.username}\033[0m entrou no lobby {request.lobby_code}."
@@ -214,7 +231,5 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             self.state.log_event(
                 f"\033[31mO lobby {request.lobby_code} foi encerrado pelo host.\033[0m"
             )
- 
-        return game_pb2.LobbyNotificationAck(ok=True)
- 
 
+        return game_pb2.LobbyNotificationAck(ok=True)

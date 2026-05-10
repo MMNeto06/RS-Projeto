@@ -63,10 +63,12 @@ class LocalPlayer:
 
     @property
     def armor_class(self) -> int:
-        """AC base, aumentada para 13 se Mage Armor estiver activo."""
+        """AC base, modificada por efeitos activos."""
         base = self.dnd_class.armor_class_base
         if self.is_effect_active("mage_armor"):
             return max(base, 13)
+        if self.is_effect_active("fortified"):
+            return base + 2
         return base
 
     # ── COOLDOWNS ─────────────────────────────────────────────────
@@ -99,8 +101,12 @@ class LocalPlayer:
             "mage_armor":   "Mage Armor",
             "disengaged":   "Disengaged",
             "sneak_attack": "Sneak Attack↑",
-            "action_surge": "Action Surge↑",
+            "action_surge": "+2d8 Surge↑",
             "hunters_mark": "Hunter's Mark",
+            "fortified":    "Fortified",
+            "cheap_shot":   "Cheap Shot↑",
+            "blessed":      "Blessed",
+            "eagle_eye":    "Eagle Eye",
         }
         expired = [k for k, v in self.active_effects.items() if now >= v]
         for k in expired:
