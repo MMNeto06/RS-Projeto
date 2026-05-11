@@ -7,9 +7,7 @@ Uso:
                       --grpc-port 50051 --kad-port 8468
 
   # Nodes seguintes (ligam ao bootstrap):
-  uv run main_game.py --username Bob   --class wizard  \\
-                      --grpc-port 50052 --kad-port 8469 \\
-                      --bootstrap-host 127.0.0.1 --bootstrap-kad-port 8468
+  uv run main_game.py --username Bob --class wizard --grpc-port 50052 --kad-port 8469 --bootstrap-host 127.0.0.1 --bootstrap-kad-port 8468
 
   # Sem especificar classe (escolhe-se no menu):
   uv run main_game.py --username Carol \\

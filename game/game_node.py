@@ -57,6 +57,8 @@ class GameNode:
             username=username,
             peers=self.peers,
             send_fn=self._send,
+            host=self.host,
+            kad_port=self.kad_port,
         )
 
         self._reader = InputReader(prompt="> ")

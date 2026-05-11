@@ -79,6 +79,11 @@ class GameServiceStub(object):
                 request_serializer=game__pb2.LobbyNotification.SerializeToString,
                 response_deserializer=game__pb2.LobbyNotificationAck.FromString,
                 _registered_method=True)
+        self.LobbyGossip = channel.unary_unary(
+                '/game.GameService/LobbyGossip',
+                request_serializer=game__pb2.LobbyGossipMessage.SerializeToString,
+                response_deserializer=game__pb2.Empty.FromString,
+                _registered_method=True)
 
 
 class GameServiceServicer(object):
@@ -138,6 +143,12 @@ class GameServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def LobbyGossip(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_GameServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -185,6 +196,11 @@ def add_GameServiceServicer_to_server(servicer, server):
                     servicer.LobbyNotify,
                     request_deserializer=game__pb2.LobbyNotification.FromString,
                     response_serializer=game__pb2.LobbyNotificationAck.SerializeToString,
+            ),
+            'LobbyGossip': grpc.unary_unary_rpc_method_handler(
+                    servicer.LobbyGossip,
+                    request_deserializer=game__pb2.LobbyGossipMessage.FromString,
+                    response_serializer=game__pb2.Empty.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -430,6 +446,33 @@ class GameService(object):
             '/game.GameService/LobbyNotify',
             game__pb2.LobbyNotification.SerializeToString,
             game__pb2.LobbyNotificationAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LobbyGossip(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/game.GameService/LobbyGossip',
+            game__pb2.LobbyGossipMessage.SerializeToString,
+            game__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,

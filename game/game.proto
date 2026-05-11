@@ -11,7 +11,10 @@ service GameService {
   rpc BroadcastEvent (GameEvent) returns (Ack);
   rpc ValidateAttack (ValidateAttackRequest)  returns (ValidateAttackResponse);
   rpc LobbyNotify    (LobbyNotification)      returns (LobbyNotificationAck);
+  rpc LobbyGossip(LobbyGossipMessage) returns (Empty);
 }
+
+message Empty {}
 
 message ChatMessage {
   string sender = 1;
@@ -124,4 +127,8 @@ message LobbyNotification {
 
 message LobbyNotificationAck {
   bool ok = 1;
+}
+
+message LobbyGossipMessage {
+  string payload = 1;
 }

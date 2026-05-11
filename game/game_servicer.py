@@ -10,6 +10,8 @@ import game_pb2
 import game_pb2_grpc
 from game_state import GameState, MatchPhase, RemotePlayer
 
+import json
+
 
 class GameServicer(game_pb2_grpc.GameServiceServicer):
 
@@ -216,5 +218,28 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             )
  
         return game_pb2.LobbyNotificationAck(ok=True)
- 
+    
+    async def LobbyGossip(self, request, context):
+        try:
+            incoming = json.loads(request.payload)
+            code = incoming["code"]
+
+            existing = self.node.lobby.known_lobbies.get(code)
+
+            if existing:
+                existing_lobby, existing_ts = existing
+                if existing_lobby.get("version", 0) >= incoming.get("version", 0):
+                    return game_pb2.Empty()
+
+            self.node.lobby.known_lobbies[code] = (incoming, time.time())
+
+            if incoming.get("source") != self.node.lobby.node_id:
+                incoming["source"] = self.node.lobby.node_id
+                await self.node.lobby._gossip_lobby(incoming)
+
+            return game_pb2.Empty()
+
+        except Exception as e:
+            print("[GOSSIP ERROR]", e)
+            return game_pb2.Empty()
 
