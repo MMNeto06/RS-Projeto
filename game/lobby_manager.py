@@ -29,13 +29,34 @@ from kademlia.node import Node
 from kademlia.utils import digest
 
 # ── Limites de dano por classe (usados pelo host na validação) ────────────────
-# Valores máximos teóricos por ataque (incluindo bónus de abilidades)
+# Valores máximos teóricos por ataque (incluindo bónus de abilidades).
+#
+# Como calcular:
+#   max_base  = max(dado) + damage_modifier
+#   max_skill = maior dado de ability que adiciona dano ao ataque
+#   limite    = max_base + max_skill  (+2 de margem para arredondamento)
+#
+# Classe       Pior caso                                            Teórico  Limite
+# ─────────────────────────────────────────────────────────────────────────────────
+# fighter    3d8(24)+3 + Action Surge 2d8(16)                    =  43      45
+# wizard     Fireball 5d6(30)                                     =  30      32
+# rogue      2d6(12)+2 + Sneak Attack 2d6(12)                    =  26      28
+# cleric     Mace 2d6(12)+2  (Sacred Flame 1d8=8 é menos)        =  14      16
+# ranger     1d8(8)+3 + Hunter's Mark 1d6(6)                     =  17      20
+# sorcerer   Wild Magic Surge 5d4(20)                             =  20      22
+# paladin    2d6(12)+4 + Divine Smite 4d6(24)                    =  40      42
+# monk       Ki Blast 2d8(16)                                     =  16      18
+# warlock    Eldritch Blast 2d8(16) + Hex 1d6(6)                 =  22      24
 MAX_DAMAGE_BY_CLASS: dict[str, int] = {
-    "fighter": 40,   # 2× (Action Surge) de 1d8+5 ~ 26, margem de segurança
-    "wizard":  30,   # Magic Missile 3×(1d4+1) = 15 base; Mage Armor não faz dano
-    "rogue":   35,   # 1d6+3 + 2d6 Sneak Attack
-    "cleric":  20,   # Sacred Flame 1d8 + Cure Wounds não é ataque
-    "ranger":  25,   # 1d8+4 + 1d6 Hunter's Mark
+    "fighter":  45,
+    "wizard":   32,
+    "rogue":    28,
+    "cleric":   16,
+    "ranger":   20,
+    "sorcerer": 22,
+    "paladin":  42,
+    "monk":     18,
+    "warlock":  24,
 }
 # Fallback quando a classe é desconhecida
 DEFAULT_MAX_DAMAGE = 50
