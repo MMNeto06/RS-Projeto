@@ -14,7 +14,7 @@ render_frame(state) imprime o ecrã completo:
   
   [Jogadores]   Alice 3K/1D   Bob 1K/2D
   
-  [Ações]  [A]tacar  [M]over  [1]Second Wind  [Q]uit
+  [Ações]  [At]acar  Mover(WASD)  [1]Second Wind  [Q]uit
 
   > █                    ← cursor fica sempre aqui
 
@@ -141,7 +141,7 @@ def render_scoreboard(state: GameState) -> str:
 def render_actions(state: GameState) -> str:
     local = state.local
     lines = [f"{BOLD}[Ações]{RESET}"]
-    lines.append(f"  {CYAN}[A]{RESET} Atacar   {CYAN}[M]{RESET} Mover   {CYAN}[S]{RESET} Scoreboard")
+    lines.append(f"  {CYAN}[AT]{RESET} Atacar   {CYAN}[WASD]{RESET} Mover   {CYAN}[S]{RESET} Scoreboard")
     for i, ability in enumerate(local.dnd_class.abilities, start=1):
         ready = local.is_ability_ready(ability.name)
         color = GREEN if ready else RED

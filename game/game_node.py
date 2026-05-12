@@ -905,7 +905,6 @@ class GameNode:
             if not self.lobby.current_lobby:
                 continue
             try:
-                from kademlia.network import Server as _KS
                 raw = await self.lobby.kad.get(
                     __import__("dht_keys", fromlist=["lobby_meta_key"]).lobby_meta_key(
                         self.lobby.current_lobby
@@ -939,8 +938,8 @@ class GameNode:
             unready
 
         Comandos:
-          a <user>         → atacar
-          m w/a/s/d        → mover
+          at <user>         → atacar
+          w/a/s/d        → mover
           1 [user]         → abilidade 1 (com alvo opcional)
           2 [user]         → abilidade 2 (com alvo opcional)
           3 [user]         → abilidade 3 (com alvo opcional)
@@ -968,6 +967,7 @@ class GameNode:
         sync_task = asyncio.create_task(self._lobby_sync_loop())
 
         try:
+            moves = {"w": (0, -1), "s": (0, 1), "a": (-1, 0), "d": (1, 0)}
             while True:
                 try:
                     text = await self._reader.readline()
@@ -984,17 +984,12 @@ class GameNode:
                 if cmd == "q":
                     break
 
-                elif cmd == "a" and len(parts) > 1:
+                elif cmd == "at" and len(parts) > 1:
                     await self.send_attack(parts[1])
                     await self.broadcast_state()
 
-                elif cmd == "m" and len(parts) > 1:
-                    moves = {"w": (0, -1), "s": (0, 1), "a": (-1, 0), "d": (1, 0)}
-                    direction = parts[1].lower()
-                    if direction in moves:
-                        await self.move(*moves[direction])
-                    else:
-                        self.state.log_event("[!] Direção inválida. Usa w/a/s/d")
+                elif cmd in moves:
+                    await self.move(*moves[cmd])
 
                 elif cmd.isdigit():
                     idx    = int(cmd) - 1
@@ -1064,7 +1059,7 @@ class GameNode:
                         
                 else:
                     self.state.log_event(
-                        "[!] Comandos: a <user> | m w/a/s/d | 1/2/3 [user] | s | q"
+                        "[!] Comandos: at <user> | w/a/s/d | 1/2/3 [user] | s | q"
                     )
 
         finally:
