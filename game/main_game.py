@@ -81,7 +81,7 @@ def _render_menu(username: str, current_class: DnDClass | None, lobby_code: str 
             f"  Classe  : {_B}{_G}{current_class.name}{_R}"
             f"  HP:{current_class.hp_base}"
             f"  AC:{current_class.armor_class_base}"
-            f"  {current_class.weapon} ({current_class.damage_dice} {current_class.damage_type})"
+            f"  {current_class.weapon} ({current_class.damage_dice})"
         )
         print(f"  Abilidades:")
         for ab in current_class.abilities:
@@ -168,7 +168,7 @@ async def run_menu(
                 print(f"\n  {_B}{current_class.name}{_R}")
                 print(
                     f"  HP {current_class.hp_base}  AC {current_class.armor_class_base}  "
-                    f"Arma: {current_class.weapon}  Dano: {current_class.damage_dice} {current_class.damage_type}\n"
+                    f"Arma: {current_class.weapon}  Dano: {current_class.damage_dice}\n"
                     f"  Ataque mod: +{current_class.attack_modifier}  "
                     f"Dano mod: +{current_class.damage_modifier}\n"
                 )

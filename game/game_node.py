@@ -19,7 +19,7 @@ import game_pb2_grpc
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dht_keys import addr_key, username_key
 
-from dnd_classes import DnDClass, roll
+from dnd_classes import DnDClass, roll, get_class
 from game_state   import GameState, LocalPlayer, MatchPhase, MAP_W, MAP_H
 from game_servicer import GameServicer
 from renderer      import render_frame
@@ -28,6 +28,11 @@ from lobby_manager import LobbyManager
 
 # Segundos de exibição do ecrã de fim antes de reiniciar
 _MATCH_END_PAUSE = 8
+
+
+def _chebyshev(x1: int, y1: int, x2: int, y2: int) -> int:
+    """Distância de Chebyshev entre dois pontos (max(|dx|, |dy|))."""
+    return max(abs(x1 - x2), abs(y1 - y2))
 
 
 class GameNode:
@@ -165,6 +170,25 @@ class GameNode:
             None,
         )
 
+    def _check_range(self, target_username: str, effective_range: int) -> bool:
+        """
+        Verifica se o alvo está dentro de `effective_range` tiles (Chebyshev).
+        Devolve True se ok, False (e loga mensagem) se fora de alcance.
+        Se não tiver posição do alvo, deixa passar (estado ainda não sincronizado).
+        """
+        target_state = self.state.others.get(target_username)
+        if target_state is None:
+            return True
+        lp   = self.state.local
+        dist = _chebyshev(lp.x, lp.y, target_state.x, target_state.y)
+        if dist > effective_range:
+            self.state.log_event(
+                f"[!] {target_username} está fora de alcance "
+                f"(dist={dist}, range={effective_range})."
+            )
+            return False
+        return True
+
     # ── BROADCAST ─────────────────────────────────────────────────
 
     async def broadcast_state(self):
@@ -218,51 +242,99 @@ class GameNode:
         if not peer:
             self.state.log_event(f"[!] Jogador '{target_username}' não encontrado.")
             return None
-    
-        lp           = self.state.local
-        attack_roll  = lp.dnd_class.roll_attack()
-        damage_roll  = lp.dnd_class.roll_damage()
-        extra_notes  = []
-    
+
+        lp          = self.state.local
+        attack_roll = lp.dnd_class.roll_attack()
+        damage_roll = lp.dnd_class.roll_damage()
+        extra_notes = []
+
+        # ── Efeitos que modificam o ataque ────────────────────────
+
         if lp.is_effect_active("action_surge"):
-            damage_roll *= 2
+            surge_bonus = roll("2d8")
+            damage_roll += surge_bonus
             del lp.active_effects["action_surge"]
-            if "Action Surge↑" in lp.status_effects:
-                lp.status_effects.remove("Action Surge↑")
-            extra_notes.append("Action Surge!")
-    
+            if "+2d8 Surge↑" in lp.status_effects:
+                lp.status_effects.remove("+2d8 Surge↑")
+            extra_notes.append(f"Action Surge +{surge_bonus}")
+
         if lp.is_effect_active("sneak_attack"):
-            from dnd_classes import roll
             bonus = roll("2d6")
             damage_roll += bonus
             del lp.active_effects["sneak_attack"]
             if "Sneak Attack↑" in lp.status_effects:
                 lp.status_effects.remove("Sneak Attack↑")
             extra_notes.append(f"Sneak Attack +{bonus}")
-    
+
+        if lp.is_effect_active("cheap_shot"):
+            attack_roll = 999
+            del lp.active_effects["cheap_shot"]
+            if "Cheap Shot↑" in lp.status_effects:
+                lp.status_effects.remove("Cheap Shot↑")
+            extra_notes.append("Cheap Shot!")
+
+        if lp.is_effect_active("blessed"):
+            bonus = roll("1d4")
+            attack_roll += bonus
+            del lp.active_effects["blessed"]
+            if "Blessed" in lp.status_effects:
+                lp.status_effects.remove("Blessed")
+            extra_notes.append(f"Blessed +{bonus}")
+
         if lp.is_effect_active("hunters_mark") and \
                 lp.marked_target.lower() == target_username.lower():
-            from dnd_classes import roll
             bonus = roll("1d6")
             damage_roll += bonus
             extra_notes.append(f"Hunter's Mark +{bonus}")
-    
+
+        if lp.is_effect_active("hex_mark") and \
+                lp.marked_target.lower() == target_username.lower():
+            bonus = roll("1d6")
+            damage_roll += bonus
+            extra_notes.append(f"Hex +{bonus}")
+
+        if lp.is_effect_active("twinned_spell"):
+            twin = lp.dnd_class.roll_damage()
+            damage_roll += twin
+            del lp.active_effects["twinned_spell"]
+            if "Twinned↑" in lp.status_effects:
+                lp.status_effects.remove("Twinned↑")
+            extra_notes.append(f"Twinned Spell +{twin}")
+
+        if lp.is_effect_active("divine_smite"):
+            smite = roll("4d6")
+            damage_roll += smite
+            del lp.active_effects["divine_smite"]
+            if "Divine Smite↑" in lp.status_effects:
+                lp.status_effects.remove("Divine Smite↑")
+            extra_notes.append(f"Divine Smite +{smite}")
+
+        # ── Range check ───────────────────────────────────────────
+        effective_rng = lp.dnd_class.attack_range
+        if lp.is_effect_active("eagle_eye"):
+            effective_rng *= 2
+
+        if not self._check_range(target_username, effective_rng):
+            return None
+
         req = game_pb2.AttackRequest(
             attacker=self.username,
-            attacker_class=lp.dnd_class.name, 
+            attacker_class=lp.dnd_class.name,
             weapon=lp.dnd_class.weapon,
             attack_roll=attack_roll,
             base_damage_roll=damage_roll,
-            damage_type=lp.dnd_class.damage_type,
             target=target_username,
             is_spell=False,
+            attacker_x=lp.x,
+            attacker_y=lp.y,
+            effective_range=effective_rng,
         )
-    
+
         if self.lobby.current_lobby and not self.lobby._is_host:
             approved = await self.lobby.request_validation(req)
             if not approved:
                 return None   # host rejeitou; mensagem já foi mostrada
-    
+
         result = await self._send(
             peer["grpc_addr"],
             lambda s, r: s.Attack(r),
@@ -320,8 +392,15 @@ class GameNode:
                 used = True
 
             elif ab.name == "Action Surge":
-                lp.set_effect("action_surge", 30, "Action Surge↑")
-                self.state.log_event("⚔ Action Surge: próximo ataque faz dano duplo!")
+                lp.set_effect("action_surge", 30, "+2d8 Surge↑")
+                self.state.log_event("⚔ Action Surge: próximo ataque +2d8 dano extra!")
+                used = True
+
+            elif ab.name == "Fortify":
+                lp.set_effect("fortified", 15, "Fortified")
+                self.state.log_event(
+                    f"⚔ Fortify: AC+2 durante 15s! (AC={lp.armor_class})"
+                )
                 used = True
 
         # ── WIZARD ────────────────────────────────────────────────
@@ -335,6 +414,8 @@ class GameNode:
                 if not peer:
                     self.state.log_event(f"[!] '{target}' não encontrado.")
                     return
+                if not self._check_range(target, ab.ability_range):
+                    return
                 total = sum(roll("1d4") + 1 for _ in range(3))
                 req = game_pb2.AttackRequest(
                     attacker=self.username,
@@ -342,15 +423,16 @@ class GameNode:
                     weapon="Magic Missile",
                     attack_roll=999,      # auto-acerto
                     base_damage_roll=total,
-                    damage_type="force",
                     target=target,
                     is_spell=True,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=ab.ability_range,
                 )
                 result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
                 if result:
-                    dmg_str = f"{result.damage_dealt} dano de força"
                     self.state.log_event(
-                        f"🔮 Magic Missile → {target}: {dmg_str}"
+                        f"🔮 Magic Missile → {target}: {result.damage_dealt} dano de força"
                         + (" 💀" if result.target_died else "")
                     )
                     if result.target_died:
@@ -362,6 +444,39 @@ class GameNode:
                 self.state.log_event(
                     f"🔮 Mage Armor activo! AC={lp.armor_class} durante 30s."
                 )
+                used = True
+
+            elif ab.name == "Fireball":
+                if not target:
+                    self.state.log_event("🔥 Uso: 3 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                if not self._check_range(target, ab.ability_range):
+                    return
+                dmg = sum(roll("1d6") for _ in range(5))
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    weapon="Fireball",
+                    attack_roll=999,      # auto-acerto
+                    base_damage_roll=dmg,
+                    target=target,
+                    is_spell=True,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=ab.ability_range,
+                )
+                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                if result:
+                    self.state.log_event(
+                        f"🔥 Fireball → {target}: {result.damage_dealt} dano de fogo"
+                        + (" 💀" if result.target_died else "")
+                    )
+                    if result.target_died:
+                        lp.kills += 1
                 used = True
 
         # ── ROGUE ─────────────────────────────────────────────────
@@ -377,6 +492,11 @@ class GameNode:
                 self.state.log_event("🗡 Disengage: imune a ataques por 5s!")
                 used = True
 
+            elif ab.name == "Cheap Shot":
+                lp.set_effect("cheap_shot", 30, "Cheap Shot↑")
+                self.state.log_event("🗡 Cheap Shot: próximo ataque é auto-acerto!")
+                used = True
+
         # ── CLERIC ────────────────────────────────────────────────
         elif class_name == "cleric":
 
@@ -389,13 +509,14 @@ class GameNode:
                 used = True
 
             elif ab.name == "Sacred Flame":
-                # CD=0 → sempre disponível; não regista cooldown
                 if not target:
                     self.state.log_event("✨ Uso: 2 <username>")
                     return
                 peer = self._find_peer(target)
                 if not peer:
                     self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                if not self._check_range(target, ab.ability_range):
                     return
                 dmg = roll("1d8")
                 req = game_pb2.AttackRequest(
@@ -404,9 +525,11 @@ class GameNode:
                     weapon="Sacred Flame",
                     attack_roll=999,      # auto-acerto (saving throw simplificado)
                     base_damage_roll=dmg,
-                    damage_type="radiant",
                     target=target,
                     is_spell=True,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=ab.ability_range,
                 )
                 result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
                 if result:
@@ -416,9 +539,12 @@ class GameNode:
                     )
                     if result.target_died:
                         lp.kills += 1
-                # CD=0: usado mas sem cooldown registado
-                await self.broadcast_state()
-                return
+                used = True
+
+            elif ab.name == "Bless":
+                lp.set_effect("blessed", 30, "Blessed")
+                self.state.log_event("✨ Bless: +1d4 ao próximo attack roll!")
+                used = True
 
         # ── RANGER ────────────────────────────────────────────────
         elif class_name == "ranger":
@@ -435,13 +561,13 @@ class GameNode:
                 used = True
 
             elif ab.name == "Volley":
-                # Ataca todos os jogadores a distância Manhattan ≤ 2
+                # Ataca todos os jogadores a distância Chebyshev ≤ 2
                 nearby = [
                     p for p in self.state.others.values()
-                    if p.alive and abs(p.x - lp.x) + abs(p.y - lp.y) <= 2
+                    if p.alive and _chebyshev(lp.x, lp.y, p.x, p.y) <= 6
                 ]
                 if not nearby:
-                    self.state.log_event("🏹 Volley: sem alvos no raio 2.")
+                    self.state.log_event("🏹 Volley: sem alvos no raio 6.")
                     return
                 for t in nearby:
                     peer = self._find_peer(t.username)
@@ -454,9 +580,11 @@ class GameNode:
                         weapon="Longbow",
                         attack_roll=lp.dnd_class.roll_attack(),
                         base_damage_roll=dmg,
-                        damage_type="piercing",
                         target=t.username,
                         is_spell=False,
+                        attacker_x=lp.x,
+                        attacker_y=lp.y,
+                        effective_range=6,
                     )
                     result = await self._send(
                         peer["grpc_addr"], lambda s, r: s.Attack(r), req
@@ -471,6 +599,234 @@ class GameNode:
                                 lp.kills += 1
                         else:
                             self.state.log_event(f"🏹 Volley → {t.username}: falhado!")
+                used = True
+
+            elif ab.name == "Eagle Eye":
+                lp.set_effect("eagle_eye", 20, "Eagle Eye")
+                self.state.log_event(
+                    f"🏹 Eagle Eye: alcance duplicado por 20s! "
+                    f"(range {lp.dnd_class.attack_range}→{lp.dnd_class.attack_range * 2})"
+                )
+                used = True
+
+        # ── SORCERER ──────────────────────────────────────────────
+        elif class_name == "sorcerer":
+
+            if ab.name == "Chaos Bolt":
+                if not target:
+                    self.state.log_event("🌀 Uso: 1 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                if not self._check_range(target, ab.ability_range):
+                    return
+                dmg = roll("3d6")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username, attacker_class=lp.dnd_class.name,
+                    weapon="Chaos Bolt", attack_roll=999, base_damage_roll=dmg,
+                    target=target, is_spell=True,
+                    attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                )
+                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                if result:
+                    self.state.log_event(
+                        f"🌀 Chaos Bolt → {target}: {result.damage_dealt} dano caótico"
+                        + (" 💀" if result.target_died else "")
+                    )
+                    if result.target_died:
+                        lp.kills += 1
+                used = True
+
+            elif ab.name == "Twinned Spell":
+                lp.set_effect("twinned_spell", 30, "Twinned↑")
+                self.state.log_event("🌀 Twinned Spell: próximo ataque básico dispara duas vezes!")
+                used = True
+
+            elif ab.name == "Wild Magic Surge":
+                if not target:
+                    self.state.log_event("🌀 Uso: 3 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                if not self._check_range(target, ab.ability_range):
+                    return
+                dmg = sum(roll("1d4") for _ in range(5))
+                req = game_pb2.AttackRequest(
+                    attacker=self.username, attacker_class=lp.dnd_class.name,
+                    weapon="Wild Magic Surge", attack_roll=999, base_damage_roll=dmg,
+                    target=target, is_spell=True,
+                    attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                )
+                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                if result:
+                    self.state.log_event(
+                        f"🌀 Wild Magic Surge → {target}: {result.damage_dealt} dano mágico"
+                        + (" 💀" if result.target_died else "")
+                    )
+                    if result.target_died:
+                        lp.kills += 1
+                used = True
+
+        # ── PALADIN ───────────────────────────────────────────────
+        elif class_name == "paladin":
+
+            if ab.name == "Divine Smite":
+                lp.set_effect("divine_smite", 30, "Divine Smite↑")
+                self.state.log_event("⚡ Divine Smite: próximo ataque +4d6 dano radiante!")
+                used = True
+
+            elif ab.name == "Lay on Hands":
+                lp.heal(25)
+                self.state.log_event(f"⚡ Lay on Hands: +25 HP ({lp.hp}/{lp.max_hp})")
+                used = True
+
+            elif ab.name == "Aura of Protection":
+                lp.set_effect("aura_of_protection", 15, "Aura +3AC")
+                self.state.log_event(
+                    f"⚡ Aura of Protection: AC+3 durante 15s! (AC={lp.armor_class})"
+                )
+                used = True
+
+        # ── MONK ──────────────────────────────────────────────────
+        elif class_name == "monk":
+
+            if ab.name == "Flurry of Blows":
+                if not target:
+                    self.state.log_event("👊 Uso: 1 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                if not self._check_range(target, ab.ability_range):
+                    return
+                total_dmg = 0
+                for _ in range(3):
+                    dmg = roll("1d4") + 1
+                    req = game_pb2.AttackRequest(
+                        attacker=self.username, attacker_class=lp.dnd_class.name,
+                        weapon="Unarmed Strike", attack_roll=999, base_damage_roll=dmg,
+                        target=target, is_spell=False,
+                        attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                    )
+                    result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                    if result:
+                        total_dmg += result.damage_dealt
+                        if result.target_died:
+                            lp.kills += 1
+                            break   # alvo morreu, parar
+                self.state.log_event(f"👊 Flurry of Blows → {target}: {total_dmg} dano total")
+                used = True
+
+            elif ab.name == "Patient Defense":
+                lp.set_effect("patient_defense", 10, "Patient Defense")
+                self.state.log_event(
+                    f"👊 Patient Defense: AC+3 durante 10s! (AC={lp.armor_class})"
+                )
+                used = True
+
+            elif ab.name == "Ki Blast":
+                if not target:
+                    self.state.log_event("👊 Uso: 3 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                if not self._check_range(target, ab.ability_range):
+                    return
+                dmg = roll("2d8")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username, attacker_class=lp.dnd_class.name,
+                    weapon="Ki Blast", attack_roll=999, base_damage_roll=dmg,
+                    target=target, is_spell=False,
+                    attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                )
+                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                if result:
+                    self.state.log_event(
+                        f"👊 Ki Blast → {target}: {result.damage_dealt} dano de ki"
+                        + (" 💀" if result.target_died else "")
+                    )
+                    if result.target_died:
+                        lp.kills += 1
+                used = True
+
+        # ── WARLOCK ───────────────────────────────────────────────
+        elif class_name == "warlock":
+
+            if ab.name == "Hex":
+                if not target:
+                    self.state.log_event("🌑 Uso: 1 <username>")
+                    return
+                lp.marked_target = target
+                lp.set_effect("hex_mark", 25, "Hex")
+                self.state.log_event(
+                    f"🌑 Hex em {target}: +1d6 nec. em cada ataque durante 25s!"
+                )
+                used = True
+
+            elif ab.name == "Eldritch Blast":
+                if not target:
+                    self.state.log_event("🌑 Uso: 2 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                if not self._check_range(target, ab.ability_range):
+                    return
+                dmg = roll("2d8")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username, attacker_class=lp.dnd_class.name,
+                    weapon="Eldritch Blast", attack_roll=999, base_damage_roll=dmg,
+                    target=target, is_spell=True,
+                    attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                )
+                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                if result:
+                    self.state.log_event(
+                        f"🌑 Eldritch Blast → {target}: {result.damage_dealt} dano de força"
+                        + (" 💀" if result.target_died else "")
+                    )
+                    if result.target_died:
+                        lp.kills += 1
+                used = True
+
+            elif ab.name == "Life Drain":
+                if not target:
+                    self.state.log_event("🌑 Uso: 3 <username>")
+                    return
+                peer = self._find_peer(target)
+                if not peer:
+                    self.state.log_event(f"[!] '{target}' não encontrado.")
+                    return
+                if not self._check_range(target, ab.ability_range):
+                    return
+                dmg = roll("2d6")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username, attacker_class=lp.dnd_class.name,
+                    weapon="Life Drain", attack_roll=999, base_damage_roll=dmg,
+                    target=target, is_spell=True,
+                    attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                )
+                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                if result and result.hit:
+                    heal_amount = max(1, result.damage_dealt // 2)
+                    lp.heal(heal_amount)
+                    self.state.log_event(
+                        f"🌑 Life Drain → {target}: {result.damage_dealt} dano, "
+                        f"+{heal_amount} HP"
+                        + (" 💀" if result.target_died else "")
+                    )
+                    if result.target_died:
+                        lp.kills += 1
+                elif result:
+                    self.state.log_event(f"🌑 Life Drain → {target}: falhado!")
                 used = True
 
         if used:
@@ -571,6 +927,7 @@ class GameNode:
           m w/a/s/d        → mover
           1 [user]         → abilidade 1 (com alvo opcional)
           2 [user]         → abilidade 2 (com alvo opcional)
+          3 [user]         → abilidade 3 (com alvo opcional)
           s                → scoreboard
           q                → sair
         """
@@ -691,7 +1048,7 @@ class GameNode:
                         
                 else:
                     self.state.log_event(
-                        "[!] Comandos: a <user> | m w/a/s/d | 1/2 [user] | s | q"
+                        "[!] Comandos: a <user> | m w/a/s/d | 1/2/3 [user] | s | q"
                     )
 
         finally:

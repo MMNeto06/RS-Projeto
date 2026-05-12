@@ -41,11 +41,15 @@ message AttackRequest {
   string attacker = 1;
   string weapon = 2;
   int32 attack_roll = 3; 
-  int32 base_damage_roll = 4; 
-  string damage_type = 5;
+  int32 base_damage_roll = 4;
+  reserved 5;
+  reserved "damage_type";
   string target = 6;
   bool is_spell = 7;
-  string attacker_class = 8;  
+  string attacker_class = 8;
+  int32 attacker_x = 9;
+  int32 attacker_y = 10;
+  int32 effective_range = 11;
 }
 
 message AttackResult {
@@ -64,7 +68,7 @@ message PlayerState {
   int32 y = 5;
   bool alive = 6;
   string class_name = 7;
-  repeated string status_effects = 8; //isto traduz para lista
+  repeated string status_effects = 8;
   int32 armor_class = 9;
   int32 kills = 10;
   int32 deaths = 11;
@@ -90,7 +94,7 @@ message GameEvent {
     MATCH_ENDED = 3;
   }
   EventType type = 1;
-  string payload = 2; //colocar vencedor ou scoreboard final aqui?
+  string payload = 2;
   int64 timestamp = 3;
   string match_id = 4;
   string event_author = 5; 
