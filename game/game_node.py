@@ -781,6 +781,13 @@ class GameNode:
                 if not self._check_range(target, ab.ability_range):
                     return
                 dmg = roll("2d8")
+                extra_notes = []
+                # Hex aplica-se a "cada ataque" — inclui abilities de dano
+                if lp.is_effect_active("hex_mark") and \
+                        lp.marked_target.lower() == target.lower():
+                    hex_bonus = roll("1d6")
+                    dmg += hex_bonus
+                    extra_notes.append(f"Hex +{hex_bonus}")
                 req = game_pb2.AttackRequest(
                     attacker=self.username, attacker_class=lp.dnd_class.name,
                     weapon="Eldritch Blast", attack_roll=999, base_damage_roll=dmg,
@@ -789,8 +796,9 @@ class GameNode:
                 )
                 result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
                 if result:
+                    extras = f"  [{', '.join(extra_notes)}]" if extra_notes else ""
                     self.state.log_event(
-                        f"🌑 Eldritch Blast → {target}: {result.damage_dealt} dano de força"
+                        f"🌑 Eldritch Blast → {target}: {result.damage_dealt} dano de força{extras}"
                         + (" 💀" if result.target_died else "")
                     )
                     if result.target_died:
@@ -808,6 +816,13 @@ class GameNode:
                 if not self._check_range(target, ab.ability_range):
                     return
                 dmg = roll("2d6")
+                extra_notes = []
+                # Hex aplica-se a "cada ataque" — inclui abilities de dano
+                if lp.is_effect_active("hex_mark") and \
+                        lp.marked_target.lower() == target.lower():
+                    hex_bonus = roll("1d6")
+                    dmg += hex_bonus
+                    extra_notes.append(f"Hex +{hex_bonus}")
                 req = game_pb2.AttackRequest(
                     attacker=self.username, attacker_class=lp.dnd_class.name,
                     weapon="Life Drain", attack_roll=999, base_damage_roll=dmg,
@@ -818,9 +833,10 @@ class GameNode:
                 if result and result.hit:
                     heal_amount = max(1, result.damage_dealt // 2)
                     lp.heal(heal_amount)
+                    extras = f"  [{', '.join(extra_notes)}]" if extra_notes else ""
                     self.state.log_event(
                         f"🌑 Life Drain → {target}: {result.damage_dealt} dano, "
-                        f"+{heal_amount} HP"
+                        f"+{heal_amount} HP{extras}"
                         + (" 💀" if result.target_died else "")
                     )
                     if result.target_died:

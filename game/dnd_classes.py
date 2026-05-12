@@ -342,14 +342,6 @@ CLASSES: dict[str, DnDClass] = {
 }
 
 
-
-    # ── SORCERER ──────────────────────────────────────────────────
-    # Variação do Wizard: mais HP, ataque base ranged útil (Eldritch Blast),
-    # spells caóticas e frequentes. Sem o poderio de Fireball, mas muito mais
-    # sustentado. Twinned Spell duplica o próximo ataque básico.
-    
-
-
 def get_class(name: str) -> DnDClass | None:
     return CLASSES.get(name.lower())
 

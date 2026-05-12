@@ -14,7 +14,7 @@ Uso:
                       --grpc-port 50053 --kad-port 8470 \\
                       --bootstrap-host 127.0.0.1 --bootstrap-kad-port 8468
 
-Classes disponíveis: fighter, wizard, rogue, cleric, ranger
+Classes disponíveis: fighter, wizard, rogue, cleric, ranger, sorcerer, paladin, monk, warlock
 
 Fluxo completo:
   1. Menu  →  escolher classe
