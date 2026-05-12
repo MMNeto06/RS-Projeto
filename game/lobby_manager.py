@@ -13,39 +13,20 @@ import json
 import time
 import asyncio
 import grpc
+import random
 
 
 from dht_keys import (
     lobby_meta_key,
     lobby_member_key,
-    lobby_index_key,
     peer_lobby_key,
 )
 
 import game_pb2
 import game_pb2_grpc
 
-"""
-para futuro
-MAX_DAMAGE_PER_HIT = {
-    # normal                  ability
-    "fighter": 27,          # 43 com Action Surge (+2d8)
-    "wizard":  30,          # Fireball 5d6; Magic Missile max=15
-    "rogue":   26,          # 2d6+2 + 2d6 (Sneak Attack)
-    "cleric":  14,          # melee 2d6+2; Sacred Flame max=8
-    "ranger":  17,          # 1d8+3 + 1d6 (Hunter's Mark)
-}
-
-# Pico absoluto por classe (inclui abilidades de amplificação)
-MAX_DAMAGE_ABSOLUTE = {
-    "fighter": 43,   # Action Surge: 3d8+3 + 2d8 = max 43
-    "wizard":  30,   # Fireball: 5d6
-    "rogue":   26,   # Sneak Attack + normal: 4d6+2
-    "cleric":  14,   # melee normal (Sacred Flame é só 8)
-    "ranger":  17,   # Hunter's Mark activo: 1d8 + 1d6 + 3
-}
-"""
-
+from kademlia.node import Node
+from kademlia.utils import digest
 
 # ── Limites de dano por classe (usados pelo host na validação) ────────────────
 # Valores máximos teóricos por ataque (incluindo bónus de abilidades)
@@ -71,25 +52,52 @@ class LobbyManager:
     username    : str
     peers       : dict          — referência ao dict de peers do ChatNode/GameNode
     send_fn     : coroutine     — helper para enviar gRPC (igual ao GameNode._send)
+
+    LobbyState = {
+        code,
+        name,
+        owner,
+        status,        # open | started | abandoned
+        version,
+        members,
+        max_players
+    }
     """
 
-    def __init__(self, kad, node_id: str, username: str, peers: dict, send_fn):
+    def __init__(self, kad, node_id: str, username: str, peers: dict, send_fn, host, kad_port):
         self.kad      = kad
-        self.node_id  = node_id
         self.username = username
         self.peers    = peers
         self._send    = send_fn 
+        self.host = host
+        self.kad_port = kad_port
 
         self.current_lobby: str | None = None   # código do lobby em que estamos
         self._ready = False
         self._is_host  = False 
         self._host_addr: str | None = None
+        self._lobby_state: dict | None = None
+        self.known_lobbies: dict[str, tuple[dict, float]] = {}
+
+    @property
+    def node_id(self) -> str:
+        """
+        Lê o node_id directamente do objecto Kademlia em tempo real.
+        Evita o problema de ficar desactualizado ("") quando o LobbyManager
+        é construído antes do kad.listen() ter corrido.
+        """
+        try:
+            return self.kad.node.id.hex()
+        except AttributeError:
+            return ""
+
 
     # ── CRIAR ──────────────────────────────────────────────────────
 
     def _generate_code(self) -> str:
         raw = f"{self.node_id}{time.time()}"
         return hashlib.sha256(raw.encode()).hexdigest()[:6].upper()
+    
     
     def _make_member_info(self, grpc_addr: str = "") -> dict:
         return {
@@ -99,10 +107,39 @@ class LobbyManager:
             "joined_at": time.time(),
             "grpc_addr": grpc_addr,
         }
+    
+    def _bump_version(self, lobby: dict):
+        lobby["version"] = time.time()
+    
+    async def _gossip_lobby(self, lobby: dict):
+        """Envia info de lobby para alguns peers aleatórios."""
+        if not self.peers:
+            return
+        
+        sample = random.sample(
+            list(self.peers.values()),
+            k=min(3, len(self.peers))   # não spamma a rede
+        )
+
+        msg = json.dumps(lobby)
+
+        tasks = []
+        for p in sample:
+            if not p.get("grpc_addr"):
+                continue
+            tasks.append(   
+                self._send(
+                    p["grpc_addr"],
+                    lambda s, r: s.LobbyGossip(r),
+                    game_pb2.LobbyGossipMessage(payload=msg)
+                )
+            )
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
     async def create(self, name: str, max_players: int, my_grpc_addr: str) -> str:
-        """Cria um novo lobby e anuncia-o na DHT. Devolve o código."""
         code = self._generate_code()
 
         lobby_meta = {
@@ -113,27 +150,38 @@ class LobbyManager:
             "max_players":    max_players,
             "status":         "open",
             "created_at":     time.time(),
+            "version":        time.time()
         }
 
-        member_info = self._make_member_info()
+        member_info = self._make_member_info(grpc_addr=my_grpc_addr)
  
         await self.kad.set(lobby_meta_key(code), json.dumps(lobby_meta))
-        await self.kad.set(lobby_member_key(code, self.node_id),
-                           json.dumps(member_info))
-        await self.kad.set(lobby_index_key(code), "1")
-        await self.kad.set(peer_lobby_key(self.node_id), json.dumps({
-            "code":            code,
-            "name":            name,
-            "max_players":     max_players,
+        await self.kad.set(lobby_member_key(code, self.node_id), json.dumps(member_info))
+        await self.kad.set(
+            f"lobby:announce:{code}",
+            json.dumps({
+                "code": code,
+                "meta_key": lobby_meta_key(code)
+            })
+        )
+
+        lobby_info = {
+            "code": code, "name": name,
+            "max_players": max_players,
             "current_players": 1,
-            "status":          "open",
-            "host_addr":       my_grpc_addr,
-        }))
+            "status": "open",
+            "host_addr": my_grpc_addr,
+        }
+
+        await self.kad.set(peer_lobby_key(self.node_id), json.dumps(lobby_info))
  
         self.current_lobby = code
         self._ready        = False
         self._is_host      = True
         self._host_addr    = my_grpc_addr
+
+        lobby_meta["source"] = self.node_id
+        await self._gossip_lobby(lobby_meta)
  
         print(f"[Lobby] Lobby '{name}' criado com código \033[1m{code}\033[0m")
         print(f"[Lobby] Partilha este código com os teus amigos.")
@@ -143,45 +191,59 @@ class LobbyManager:
 
     # ── LISTAR ─────────────────────────────────────────────────────
 
-    async def list_open(self):
-        """Imprime os lobbies abertos conhecidos pelos peers actuais."""
-        lobbies: list[dict] = []
- 
-        fetch_tasks = [
-            self.kad.get(peer_lobby_key(node_id))
-            for node_id in self.peers
-        ]
+    async def _probe_lobby_codes(self, candidates: set[str]) -> set[str]:
+        """
+        Tenta descobrir códigos de lobby a partir de peers conhecidos.
+        """
+        discovered = set()
 
-        results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
- 
-        for raw in results:
-            if not raw or isinstance(raw, Exception):
+        for nid in candidates:
+            # tentativa 1: pedir meta de possíveis lobbies conhecidos localmente
+            # (simples versão inicial — depois refinamos para gossip)
+            try:
+                raw = await self.kad.get(peer_lobby_key(nid))
+                if raw:
+                    info = json.loads(raw)
+                    code = info.get("code")
+                    if code:
+                        discovered.add(code)
+            except Exception:
+                continue
+
+        return discovered
+
+    async def list_open(self):
+        lobbies: dict[str, dict] = {}
+
+        # 1. usar gossip cache (rápido)
+        for code, (lobby, ts) in self.known_lobbies.items():
+            if time.time() - ts > 30:
+                continue
+            if lobby.get("status") == "open":
+                lobbies[code] = lobby
+
+        # 2. validar com DHT (verdade absoluta)
+        for code in list(lobbies.keys()):
+            raw = await self.kad.get(lobby_meta_key(code))
+            if not raw:
                 continue
             try:
-                lobby = json.loads(raw)
-                if lobby.get("status") == "open":
-                    lobbies.append(lobby)
-            except json.JSONDecodeError:
+                meta = json.loads(raw)
+                if meta.get("status") != "open":
+                    lobbies.pop(code, None)
+                else:
+                    lobbies[code] = meta
+            except:
                 pass
- 
-        # Remover duplicados pelo código (pode haver vários peers no mesmo lobby)
-        seen: set[str] = set()
-        unique: list[dict] = []
-        for l in lobbies:
-            if l["code"] not in seen:
-                seen.add(l["code"])
-                unique.append(l)
- 
-        if not unique:
-            print("[Lobby] Nenhum lobby disponível de momento.")
-            return
- 
-        print("\n┌─ Lobbies abertos " + "─" * 40)
-        for l in unique:
-            players_str = f"{l.get('current_players', '?')}/{l['max_players']}"
-            print(f"│  [{l['code']}] \033[1m{l['name']}\033[0m — {players_str} jogadores")
-        print("└" + "─" * 50)
 
+        if not lobbies:
+            print("[Lobby] Nenhum lobby disponível.")
+            return
+
+        print("\n┌─ Lobbies abertos ─" + "─" * 40)
+        for l in lobbies.values():
+            print(f"│ [{l['code']}] {l['name']} — {l['max_players']}")
+        print("└" + "─" * 50)
 
     # ── ENTRAR ─────────────────────────────────────────────────────
 
@@ -233,11 +295,16 @@ class LobbyManager:
         member_info = self._make_member_info(grpc_addr=my_grpc_addr)
         await self.kad.set(lobby_member_key(code, self.node_id),
                            json.dumps(member_info))
+        await self._notify_peers(code, game_pb2.LobbyNotification.PLAYER_JOINED)
  
         self.current_lobby = code
         self._ready        = False
         self._is_host      = False
-        self._host_addr    = meta.get("host_addr")
+        self._host_addr    = meta.get("host_addr")  
+        self._lobby_state = {
+            **meta,
+            "fetched_at": time.time()
+        }
  
         print(f"[Lobby] Entraste no lobby \033[1m{code}\033[0m — {meta['name']}")
         print(f"[Lobby] Usa /ready quando estiveres pronto.")
@@ -289,7 +356,9 @@ class LobbyManager:
                 try:
                     meta = json.loads(raw)
                     meta["status"] = "abandoned"
+                    meta["version"] = time.time()
                     await self.kad.set(lobby_meta_key(code), json.dumps(meta))
+                    await self._notify_peers(code, game_pb2.LobbyNotification.LOBBY_CLOSED)
                     print("[Lobby] Eras o host — o lobby foi encerrado.")
                 except json.JSONDecodeError:
                     pass
@@ -300,6 +369,10 @@ class LobbyManager:
         self._ready        = False
         self._is_host      = False
         self._host_addr    = None
+
+        if self._lobby_state:
+            count = max(0, await self._count_members(code) - 1)
+            await self._update_player_count(code, self._lobby_state, count)
 
 
     # ── PRONTO / NÃO PRONTO ───────────────────────────────────────
@@ -340,32 +413,33 @@ class LobbyManager:
 
     # ── LOBBY STATUS ──────────────────────────────────────
 
+
     async def _fetch_members(self, code: str) -> list[dict]:
-        """Busca todos os membros activos de um lobby."""
         members: list[dict] = []
-        # Iterar sobre os peers conhecidos + nós próprios
         candidate_ids = set(self.peers.keys()) | {self.node_id}
-        tasks = [
-            self.kad.get(lobby_member_key(code, nid))
-            for nid in candidate_ids
-        ]
+        tasks = [self.kad.get(lobby_member_key(code, nid)) for nid in candidate_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for raw in results:
             if not raw or isinstance(raw, Exception):
                 continue
             try:
                 m = json.loads(raw)
-                if m:   # tombstones são strings vazias
+                if m:
                     members.append(m)
             except (json.JSONDecodeError, TypeError):
                 pass
+        
         return members
-
+    
     def _get_owner_id(self) -> str | None:
-        """Tenta obter o owner_id a partir do lobby_meta em cache (best-effort)."""
-        # Este valor é preenchido assincronamente; não bloqueamos aqui.
-        return None   # sobrescrito quando necessário
+        """Devolve o node_id do owner. Se formos o host, sabemos logo."""
+        if self._is_host:
+            return self.node_id
+        if self._lobby_state:
+            return self._lobby_state.get("owner")
+        return None
 
+    
     async def status(self):
         """Mostra quem está no lobby e o estado de ready de cada um."""
         if not self.current_lobby:
@@ -434,10 +508,17 @@ class LobbyManager:
             print("[Lobby] Usa /lobby status para ver o estado de cada jogador.")
             return False
  
-        # Marcar como started na DHT
         meta["status"] = "started"
+        meta["version"] = time.time()
+        meta["source"] = self.node_id
+
         await self.kad.set(lobby_meta_key(self.current_lobby), json.dumps(meta))
- 
+        await self._gossip_lobby(meta)
+        await self._notify_peers(
+            self.current_lobby,
+            game_pb2.LobbyNotification.LOBBY_STARTED
+        )
+
         print(f"\033[1m[Lobby] A iniciar o jogo! Boa sorte a todos.\033[0m")
         return True
 
@@ -475,8 +556,8 @@ class LobbyManager:
         Devolve True se o host aprovou.
         """
         if not self._host_addr:
-            # Sem host conhecido, deixar passar (fallback permissivo)
-            return True
+            print("[Lobby] Host desconhecido — ataque bloqueado por segurança.")
+            return False
  
         try:
             val_req = game_pb2.ValidateAttackRequest(
@@ -516,13 +597,15 @@ class LobbyManager:
             if not self.current_lobby:
                 break
             try:
+                await self.refresh_lobby_state()
                 raw = await self.kad.get(lobby_meta_key(self.current_lobby))
                 if not raw:
                     continue
                 meta = json.loads(raw)
                 if meta.get("status") == "started":
                     print("\n\033[1m[Lobby] O host iniciou o jogo! A entrar…\033[0m")
-                    return self.current_lobby   # usado como match_id
+                    self.current_lobby = None
+                    return meta.get("code")
                 if meta.get("status") == "abandoned":
                     print("\n[Lobby] O host saiu — lobby encerrado.")
                     self.current_lobby = None
@@ -532,7 +615,11 @@ class LobbyManager:
             except Exception:
                 pass
         return None
+    
+    async def refresh_lobby_state(self):
+        if not self.current_lobby:
+            return
 
- 
-
-
+        raw = await self.kad.get(lobby_meta_key(self.current_lobby))
+        if raw:
+            self._lobby_state = json.loads(raw)

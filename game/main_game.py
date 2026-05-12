@@ -7,9 +7,7 @@ Uso:
                       --grpc-port 50051 --kad-port 8468
 
   # Nodes seguintes (ligam ao bootstrap):
-  uv run main_game.py --username Bob   --class wizard  \\
-                      --grpc-port 50052 --kad-port 8469 \\
-                      --bootstrap-host 127.0.0.1 --bootstrap-kad-port 8468
+  uv run main_game.py --username Bob --class wizard --grpc-port 50052 --kad-port 8469 --bootstrap-host 127.0.0.1 --bootstrap-kad-port 8468
 
   # Sem especificar classe (escolhe-se no menu):
   uv run main_game.py --username Carol \\
@@ -92,6 +90,17 @@ def _render_menu(username: str, current_class: DnDClass | None, lobby_code: str 
     else:
         print(f"  Classe  : {_RE}(nenhuma — usa 'class <nome>' para escolher){_R}")
 
+
+    print()
+    print(list_classes())
+    print(
+        f"  {_B}Comandos:{_R}\n"
+        f"    {_C}class <nome>{_R}  — escolher/mudar classe\n"
+        f"    {_C}info{_R}          — detalhes da classe actual\n"
+        f"    {_G}join{_R}          — {_B}entrar no jogo{_R}\n"
+        f"    {_RE}quit{_R}          — sair\n"
+    )
+
     if lobby_code:
         print(f"\n  {_M}Lobby activo : {_B}{lobby_code}{_R}")
         print(
@@ -104,16 +113,6 @@ def _render_menu(username: str, current_class: DnDClass | None, lobby_code: str 
             f"  {_D}  lobby create <nome> <max>   · lobby join <código>{_R}\n"
             f"  {_D}  lobby list{_R}"
         )
-
-    print()
-    print(list_classes())
-    print(
-        f"  {_B}Comandos:{_R}\n"
-        f"    {_C}class <nome>{_R}  — escolher/mudar classe\n"
-        f"    {_C}info{_R}          — detalhes da classe actual\n"
-        f"    {_G}join{_R}          — {_B}entrar no jogo{_R}\n"
-        f"    {_RE}quit{_R}          — sair\n"
-    )
 
 
 async def run_menu(
@@ -208,7 +207,7 @@ async def run_menu(
                     print("  [!] maxJogadores deve ser um número inteiro.")
                     continue
                 await node.lobby.create(parts[2], max_p, my_addr)
-                _render_menu(username, current_class, node.lobby.current_lobby)
+                #_render_menu(username, current_class, node.lobby.current_lobby)
  
             elif sub == "join":
                 if not current_class:
@@ -252,15 +251,7 @@ async def run_menu(
  
         elif cmd == "unready":
             await node.lobby.set_ready(False)
- 
-        # ── join (modo directo, sem lobby) ────────────────────────
-        elif cmd == "join":
-            if not current_class:
-                print(f"  {_RE}[!]{_R} Escolhe uma classe primeiro: class <nome>")
-                continue
-            _clear()
-            return current_class
- 
+  
         # ── desconhecido ──────────────────────────────────────────
         else:
             print(
