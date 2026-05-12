@@ -236,17 +236,24 @@ class LobbyManager:
     async def list_open(self):
         lobbies: dict[str, dict] = {}
 
-        # 1. usar gossip cache (rápido)
+        # 1. gossip cache (rápido)
         for code, (lobby, ts) in self.known_lobbies.items():
             if time.time() - ts > 30:
                 continue
             if lobby.get("status") == "open":
                 lobbies[code] = lobby
 
-        # 2. validar com DHT (verdade absoluta)
+        # 2. DHT scan para peers que não receberam o gossip  ← FIX
+        dht_codes = await self._probe_lobby_codes(set(self.peers.keys()))
+        for code in dht_codes:
+            if code not in lobbies:
+                lobbies[code] = {}  # será preenchido no passo 3
+
+        # 3. validar/completar tudo via DHT
         for code in list(lobbies.keys()):
             raw = await self.kad.get(lobby_meta_key(code))
             if not raw:
+                lobbies.pop(code, None)
                 continue
             try:
                 meta = json.loads(raw)
@@ -255,7 +262,7 @@ class LobbyManager:
                 else:
                     lobbies[code] = meta
             except:
-                pass
+                lobbies.pop(code, None)
 
         if not lobbies:
             print("[Lobby] Nenhum lobby disponível.")
