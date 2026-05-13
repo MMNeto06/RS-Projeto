@@ -141,7 +141,7 @@ def render_scoreboard(state: GameState) -> str:
 def render_actions(state: GameState) -> str:
     local = state.local
     lines = [f"{BOLD}[Ações]{RESET}"]
-    lines.append(f"  {CYAN}[AT]{RESET} Atacar   {CYAN}[WASD]{RESET} Mover   {CYAN}[S]{RESET} Scoreboard")
+    lines.append(f"  {CYAN}[AT]{RESET} Atacar   {CYAN}[WASD]{RESET} Mover   {CYAN}[SC]{RESET} Scoreboard")
     for i, ability in enumerate(local.dnd_class.abilities, start=1):
         ready = local.is_ability_ready(ability.name)
         color = GREEN if ready else RED

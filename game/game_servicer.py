@@ -182,6 +182,8 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             await self.node.broadcast_state()
 
         return game_pb2.Ack(received=True, by=self.state.local.username)
+    
+    
 
     # ── VALIDATE ATTACK ───────────────────────────────────────────
 
@@ -203,7 +205,14 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             )
 
         return game_pb2.ValidateAttackResponse(approved=approved, reason=reason)
-
+    
+    async def HostAttack(self, request, context):
+        # REceives attack as host to process
+        if not getattr(self.node, "lobby", None) or not self.node.lobby._is_host:
+            self.state.log_event("[HostAttack] Received HostAttack on non-host — rejected.")
+            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
+        return await self.resolve_attack(request, context)
+    
     # ── LOBBY NOTIFY ──────────────────────────────────────────────
 
     async def LobbyNotify(self, request, context):
@@ -259,5 +268,141 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         except Exception as e:
             print("[GOSSIP ERROR]", e)
             return game_pb2.Empty()
+    
+    
+    async def resolve_attack(self, request, context):
+        state = self.state
+        node = self.node
 
-        return game_pb2.LobbyNotificationAck(ok=True)
+        # lookup users to extract stats
+        def user_lookup(username):
+            if username == state.local.username:
+                return state.local, True
+            return state.others.get(username), False
+
+        attacker, attackerIsHost = user_lookup(request.attacker)
+        target, targetIsHost = user_lookup(request.target)
+
+        if attacker is None:
+            self.state.log_event(f"[Host] Ataque de desconhecido '{request.attacker}' — rejeitado.")
+            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
+        if target is None:
+            self.state.log_event(f"[Host] Ataque a desconhecido '{request.target}' — rejeitado.")
+            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
+
+        # Validate the attack
+        approved, reason = node.lobby.validate_attack(
+            attacker_class=request.attacker_class,
+            damage=request.base_damage_roll,
+            weapon=request.weapon,
+            is_spell=request.is_spell,
+        )
+        if not approved:
+            self.state.log_event(
+                f"[Host] ⚠ Ataque rejeitado de {request.attacker} ({request.attacker_class}): {reason}"
+            )
+            if(targetIsHost):
+                current_hp = state.local.hp
+            else:
+                current_hp= target.hp
+            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=current_hp, target_died=False)
+
+
+        #check if attack is in range
+        if attackerIsHost:
+            ax, ay = state.local.x, state.local.y
+        else:
+            ax, ay = getattr(attacker, 'x', request.attacker_x), getattr(attacker, 'y', request.attacker_y)
+        if targetIsHost:
+            tx, ty = state.local.x, state.local.y
+        else:
+            tx, ty = target.x, target.y
+        
+            
+        dist = _chebyshev(ax, ay, tx, ty)
+        if dist > request.effective_range:
+            self.state.log_event(
+                f"{request.attacker} tentou atacar fora de alcance (dist={dist}, range={request.effective_range}) — rejeitado."
+            )
+            current_hp = state.local.hp if targetIsHost else target.hp
+            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=current_hp, target_died=False)
+
+
+        # Calc hit
+        if(targetIsHost):
+            target_ac = state.local.armor_class
+        else:
+            target_ac = getattr(target, 'armor_class', 0)
+            
+        hit = request.attack_roll >= target_ac
+        if(hit):
+            dmg = max(1, request.base_damage_roll)
+        else:
+            dmg = 0
+            
+        #apply the damage
+        died = False
+        if hit:
+            if targetIsHost:
+                remaining = state.local.take_damage(dmg)
+                died = not state.local.alive
+                if died: asyncio.create_task(self._respawn_after(3))
+            else:
+                target.hp = max(0, target.hp - dmg)
+                if target.hp == 0:
+                    target.alive = False
+                    target.deaths += 1
+                    died = True
+                remaining = target.hp
+                
+            if attackerIsHost:
+                state.local.kills += (1 if died else 0)
+            else:
+                attacker.kills += (1 if died else 0)
+        else:
+            remaining = state.local.hp if targetIsHost else target.hp
+
+        # create the target playerstate for broadcast
+        if targetIsHost:
+            ps_target = game_pb2.PlayerState(
+                username=state.local.username,
+                hp=state.local.hp,
+                max_hp=state.local.max_hp,
+                x=state.local.x,
+                y=state.local.y,
+                alive=state.local.alive,
+                class_name=state.local.dnd_class.name,
+                status_effects=state.local.status_effects,
+                armor_class=state.local.armor_class,
+                kills=state.local.kills,
+                deaths=state.local.deaths,
+                match_id=state.match_id,
+            )
+        else:
+            ps_target = game_pb2.PlayerState(
+                username=target.username,
+                hp=target.hp,
+                max_hp=target.max_hp,
+                x=target.x,
+                y=target.y,
+                alive=target.alive,
+                class_name=target.class_name,
+                status_effects=target.status_effects,
+                armor_class=target.armor_class,
+                kills=target.kills,
+                deaths=target.deaths,
+                match_id=state.match_id,
+            )
+
+        # Broadcast target state
+        tasks = []
+        for nid, p in self.node.peers.items(): #broadcast to each peer in lobby
+            if nid == self.node.node_id: # skip self
+                continue
+            addr = p.get("grpc_addr")
+            if not addr:
+                continue
+            tasks.append(self.node._send(addr, lambda s, r: s.StateUpdate(r), ps_target))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return game_pb2.AttackResult(hit=hit, damage_dealt=dmg, target_hp_remaining=remaining, status_effect="dead" if died else "", target_died=died)

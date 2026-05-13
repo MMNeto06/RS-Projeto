@@ -159,6 +159,34 @@ class GameNode:
         except Exception:
             return None
 
+    async def _route_attack_request(self, req, target_peer: dict | None = None):
+        """Route an AttackRequest to the host (HostAttack) or fallback to the
+        target peer's Attack RPC. Returns the RPC result or None on error.
+        """
+        # route the attack. if host, use HostAttack locally. if not, send to host.
+        result = None
+        if self.lobby.current_lobby and not getattr(self.lobby, "_is_host", False):
+            host_addr = getattr(self.lobby, "_host_addr", None) # get host address
+
+            if host_addr: # send to host
+                rpc_call = lambda s, r: s.HostAttack(r)
+                result = await self._send(host_addr, rpc_call, req)
+            else:
+                self.state.log_event("[!] Não foi possível enviar o ataque.")
+                return None
+        else:
+            # We're the host — call the local gRPC server via loopback
+            # (binding is usually 0.0.0.0, so using self.host can fail).
+            local_host_addr = f"{self.host}:{self.grpc_port}"
+            rpc_call = lambda s, r: s.HostAttack(r)
+            result = await self._send(local_host_addr, rpc_call, req)
+
+        if result is None:
+            self.state.log_event("[!] Ataque falhou.")
+            return None
+
+        return result
+
     # ── HELPERS ───────────────────────────────────────────────────
 
     def _find_peer(self, username: str) -> dict | None:
@@ -230,6 +258,8 @@ class GameNode:
         ]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+            
+
 
     # ── ATAQUE BÁSICO ─────────────────────────────────────────────
 
@@ -329,17 +359,12 @@ class GameNode:
             attacker_y=lp.y,
             effective_range=effective_rng,
         )
+        result = await self._route_attack_request(req, peer)
 
-        if self.lobby.current_lobby and not self.lobby._is_host:
-            approved = await self.lobby.request_validation(req)
-            if not approved:
-                return None   # host rejeitou; mensagem já foi mostrada
-
-        result = await self._send(
-            peer["grpc_addr"],
-            lambda s, r: s.Attack(r),
-            req,
-        )
+        if result is None:
+            self.state.log_event("[!] Ataque falhou.")
+            return None
+        
         if result:
             extras = f"  [{', '.join(extra_notes)}]" if extra_notes else ""
             if result.hit:
@@ -429,7 +454,7 @@ class GameNode:
                     attacker_y=lp.y,
                     effective_range=ab.ability_range,
                 )
-                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                result = await self._route_attack_request(req, peer)
                 if result:
                     self.state.log_event(
                         f"🔮 Magic Missile → {target}: {result.damage_dealt} dano de força"
@@ -469,7 +494,7 @@ class GameNode:
                     attacker_y=lp.y,
                     effective_range=ab.ability_range,
                 )
-                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                result = await self._route_attack_request(req, peer)
                 if result:
                     self.state.log_event(
                         f"🔥 Fireball → {target}: {result.damage_dealt} dano de fogo"
@@ -531,7 +556,7 @@ class GameNode:
                     attacker_y=lp.y,
                     effective_range=ab.ability_range,
                 )
-                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                result = await self._route_attack_request(req, peer)
                 if result:
                     self.state.log_event(
                         f"✨ Sacred Flame → {target}: {result.damage_dealt} dano radiante"
@@ -586,9 +611,7 @@ class GameNode:
                         attacker_y=lp.y,
                         effective_range=6,
                     )
-                    result = await self._send(
-                        peer["grpc_addr"], lambda s, r: s.Attack(r), req
-                    )
+                    result = await self._route_attack_request(req, peer)
                     if result:
                         if result.hit:
                             self.state.log_event(
@@ -629,7 +652,7 @@ class GameNode:
                     target=target, is_spell=True,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
                 )
-                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                result = await self._route_attack_request(req, peer)
                 if result:
                     self.state.log_event(
                         f"🌀 Chaos Bolt → {target}: {result.damage_dealt} dano caótico"
@@ -661,7 +684,7 @@ class GameNode:
                     target=target, is_spell=True,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
                 )
-                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                result = await self._route_attack_request(req, peer)
                 if result:
                     self.state.log_event(
                         f"🌀 Wild Magic Surge → {target}: {result.damage_dealt} dano mágico"
@@ -713,7 +736,7 @@ class GameNode:
                         target=target, is_spell=False,
                         attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
                     )
-                    result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                    result = await self._route_attack_request(req, peer)
                     if result:
                         total_dmg += result.damage_dealt
                         if result.target_died:
@@ -746,7 +769,7 @@ class GameNode:
                     target=target, is_spell=False,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
                 )
-                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                result = await self._route_attack_request(req, peer)
                 if result:
                     self.state.log_event(
                         f"👊 Ki Blast → {target}: {result.damage_dealt} dano de ki"
@@ -794,7 +817,7 @@ class GameNode:
                     target=target, is_spell=True,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
                 )
-                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                result = await self._route_attack_request(req, peer)
                 if result:
                     extras = f"  [{', '.join(extra_notes)}]" if extra_notes else ""
                     self.state.log_event(
@@ -829,7 +852,7 @@ class GameNode:
                     target=target, is_spell=True,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
                 )
-                result = await self._send(peer["grpc_addr"], lambda s, r: s.Attack(r), req)
+                result = await self._route_attack_request(req, peer)
                 if result and result.hit:
                     heal_amount = max(1, result.damage_dealt // 2)
                     lp.heal(heal_amount)
@@ -943,7 +966,7 @@ class GameNode:
           1 [user]         → abilidade 1 (com alvo opcional)
           2 [user]         → abilidade 2 (com alvo opcional)
           3 [user]         → abilidade 3 (com alvo opcional)
-          s                → scoreboard
+          sc                → scoreboard
           q                → sair
         """
         print("\n[Jogo] A entrar na partida…")
@@ -996,7 +1019,7 @@ class GameNode:
                     target = parts[1] if len(parts) > 1 else None
                     await self._use_ability(idx, target)
 
-                elif cmd == "s":
+                elif cmd == "sc":
                     self.state.log_event("── Scoreboard ──")
                     for uname, k, d in self.state.scoreboard():
                         self.state.log_event(f"  {uname}: {k}K / {d}D")

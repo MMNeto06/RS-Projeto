@@ -215,11 +215,30 @@ class GameState:
     # ── ACTUALIZAR ESTADO REMOTO ──────────────────────────────────
 
     def update_remote(self, pb_state) -> None:
-        nid      = pb_state.username
-        existing = self.others.get(nid)
-        self.others[nid] = RemotePlayer(
+        username = pb_state.username
+        #if the update is for us apply it localy, else, apply it to others
+        try:
+            if username.lower() == self.local.username.lower():
+                self.local.hp = pb_state.hp
+                # position and alive state updated from authoritative host
+                self.local.x = pb_state.x
+                self.local.y = pb_state.y
+                self.local.alive = pb_state.alive
+                # update kills/deaths and status effects
+                self.local.kills = pb_state.kills
+                self.local.deaths = pb_state.deaths
+                self.local.status_effects = list(pb_state.status_effects)
+                return
+        except Exception:
+            pass
+
+        existing_key = next((k for k, v in self.others.items()
+                             if v.username.lower() == username.lower()), None)
+        key = existing_key if existing_key else username
+        existing = self.others.get(key)
+        self.others[key] = RemotePlayer(
             username=pb_state.username,
-            node_id=nid,
+            node_id=existing.node_id if existing else "",
             grpc_addr=existing.grpc_addr if existing else "",
             hp=pb_state.hp,
             max_hp=pb_state.max_hp,

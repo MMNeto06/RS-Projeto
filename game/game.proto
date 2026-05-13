@@ -12,6 +12,7 @@ service GameService {
   rpc ValidateAttack (ValidateAttackRequest)  returns (ValidateAttackResponse);
   rpc LobbyNotify    (LobbyNotification)      returns (LobbyNotificationAck);
   rpc LobbyGossip(LobbyGossipMessage) returns (Empty);
+  rpc HostAttack (AttackRequest) returns (AttackResult);
 }
 
 message Empty {}
@@ -42,14 +43,12 @@ message AttackRequest {
   string weapon = 2;
   int32 attack_roll = 3; 
   int32 base_damage_roll = 4;
-  reserved 5;
-  reserved "damage_type";
-  string target = 6;
-  bool is_spell = 7;
-  string attacker_class = 8;
-  int32 attacker_x = 9;
-  int32 attacker_y = 10;
-  int32 effective_range = 11;
+  string target = 5;
+  bool is_spell = 6;
+  string attacker_class = 7;
+  int32 attacker_x = 8;
+  int32 attacker_y = 9;
+  int32 effective_range = 1;
 }
 
 message AttackResult {
