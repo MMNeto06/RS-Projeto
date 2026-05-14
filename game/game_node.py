@@ -358,6 +358,7 @@ class GameNode:
             attacker_x=lp.x,
             attacker_y=lp.y,
             effective_range=effective_rng,
+            ability_name="",
         )
         result = await self._route_attack_request(req, peer)
 
@@ -390,11 +391,7 @@ class GameNode:
         """
         lp        = self.state.local
         abilities = lp.dnd_class.abilities
-
-        if not (0 <= idx < len(abilities)):
-            self.state.log_event("[!] Abilidade inválida.")
-            return
-
+        used = True
         ab         = abilities[idx]
         class_name = lp.dnd_class.name.lower()
 
@@ -410,22 +407,51 @@ class GameNode:
 
             if ab.name == "Second Wind":
                 heal = roll("1d10") + 3
-                lp.heal(heal)
-                self.state.log_event(
-                    f"⚔ Second Wind: +{heal} HP ({lp.hp}/{lp.max_hp})"
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Second Wind",
+                    heal_amount=heal,
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event(f"⚔ Second Wind: +{heal} HP ")
                 used = True
 
             elif ab.name == "Action Surge":
-                lp.set_effect("action_surge", 30, "+2d8 Surge↑")
-                self.state.log_event("⚔ Action Surge: próximo ataque +2d8 dano extra!")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Action Surge",
+                    status_effect="+2d8 Surge↑",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
+                )
+                await self._route_attack_request(req, None)
+                self.state.log_event("⚔ Action Surge: próximo ataque +2d8 dano extra! ")
                 used = True
 
             elif ab.name == "Fortify":
-                lp.set_effect("fortified", 15, "Fortified")
-                self.state.log_event(
-                    f"⚔ Fortify: AC+2 durante 15s! (AC={lp.armor_class})"
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Fortify",
+                    status_effect="Fortified",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event(f"⚔ Fortify: AC+2 durante 15s! ")
                 used = True
 
         # ── WIZARD ────────────────────────────────────────────────
@@ -453,6 +479,7 @@ class GameNode:
                     attacker_x=lp.x,
                     attacker_y=lp.y,
                     effective_range=ab.ability_range,
+                    ability_name="Magic Missile",
                 )
                 result = await self._route_attack_request(req, peer)
                 if result:
@@ -465,10 +492,19 @@ class GameNode:
                 used = True
 
             elif ab.name == "Mage Armor":
-                lp.set_effect("mage_armor", 30, "Mage Armor")
-                self.state.log_event(
-                    f"🔮 Mage Armor activo! AC={lp.armor_class} durante 30s."
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Mage Armor",
+                    status_effect="Mage Armor",
+                    target=self.username,
+                    is_spell=True,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event("🔮 Mage Armor activo! ")
                 used = True
 
             elif ab.name == "Fireball":
@@ -493,6 +529,7 @@ class GameNode:
                     attacker_x=lp.x,
                     attacker_y=lp.y,
                     effective_range=ab.ability_range,
+                    ability_name="Fireball",
                 )
                 result = await self._route_attack_request(req, peer)
                 if result:
@@ -508,18 +545,51 @@ class GameNode:
         elif class_name == "rogue":
 
             if ab.name == "Sneak Attack":
-                lp.set_effect("sneak_attack", 15, "Sneak Attack↑")
-                self.state.log_event("🗡 Sneak Attack: próximo ataque +2d6!")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Sneak Attack",
+                    status_effect="Sneak Attack↑",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
+                )
+                await self._route_attack_request(req, None)
+                self.state.log_event("🗡 Sneak Attack: próximo ataque +2d6! ")
                 used = True
 
             elif ab.name == "Disengage":
-                lp.set_effect("disengaged", 5, "Disengaged")
-                self.state.log_event("🗡 Disengage: imune a ataques por 5s!")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Disengage",
+                    status_effect="Disengaged",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
+                )
+                await self._route_attack_request(req, None)
+                self.state.log_event("🗡 Disengage: imune a ataques por 5s! ")
                 used = True
 
             elif ab.name == "Cheap Shot":
-                lp.set_effect("cheap_shot", 30, "Cheap Shot↑")
-                self.state.log_event("🗡 Cheap Shot: próximo ataque é auto-acerto!")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Cheap Shot",
+                    status_effect="Cheap Shot↑",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
+                )
+                await self._route_attack_request(req, None)
+                self.state.log_event("🗡 Cheap Shot: próximo ataque é auto-acerto! ")
                 used = True
 
         # ── CLERIC ────────────────────────────────────────────────
@@ -527,10 +597,19 @@ class GameNode:
 
             if ab.name == "Cure Wounds":
                 heal = roll("1d8") + 3
-                lp.heal(heal)
-                self.state.log_event(
-                    f"✨ Cure Wounds: +{heal} HP ({lp.hp}/{lp.max_hp})"
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Cure Wounds",
+                    heal_amount=heal,
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event(f"✨ Cure Wounds: +{heal} HP ")
                 used = True
 
             elif ab.name == "Sacred Flame":
@@ -555,6 +634,7 @@ class GameNode:
                     attacker_x=lp.x,
                     attacker_y=lp.y,
                     effective_range=ab.ability_range,
+                    ability_name="Sacred Flame",
                 )
                 result = await self._route_attack_request(req, peer)
                 if result:
@@ -567,8 +647,19 @@ class GameNode:
                 used = True
 
             elif ab.name == "Bless":
-                lp.set_effect("blessed", 30, "Blessed")
-                self.state.log_event("✨ Bless: +1d4 ao próximo attack roll!")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Bless",
+                    status_effect="Blessed",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
+                )
+                await self._route_attack_request(req, None)
+                self.state.log_event("✨ Bless: +1d4 ao próximo attack roll! ")
                 used = True
 
         # ── RANGER ────────────────────────────────────────────────
@@ -578,11 +669,20 @@ class GameNode:
                 if not target:
                     self.state.log_event("🏹 Uso: 1 <username>")
                     return
-                lp.marked_target = target
-                lp.set_effect("hunters_mark", 30, "Hunter's Mark")
-                self.state.log_event(
-                    f"🏹 Hunter's Mark em {target}: +1d6 nos próximos 30s!"
+                # Route mark to host so it's authoritative
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Hunter's Mark",
+                    status_effect=f"Hunter's Mark:{target}",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event(f"🏹 Hunter's Mark em {target}: host-resolved")
                 used = True
 
             elif ab.name == "Volley":
@@ -610,6 +710,7 @@ class GameNode:
                         attacker_x=lp.x,
                         attacker_y=lp.y,
                         effective_range=6,
+                        ability_name="Volley",
                     )
                     result = await self._route_attack_request(req, peer)
                     if result:
@@ -625,11 +726,19 @@ class GameNode:
                 used = True
 
             elif ab.name == "Eagle Eye":
-                lp.set_effect("eagle_eye", 20, "Eagle Eye")
-                self.state.log_event(
-                    f"🏹 Eagle Eye: alcance duplicado por 20s! "
-                    f"(range {lp.dnd_class.attack_range}→{lp.dnd_class.attack_range * 2})"
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Eagle Eye",
+                    status_effect="Eagle Eye",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event(f"🏹 Eagle Eye: alcance duplicado por 20s! ")
                 used = True
 
         # ── SORCERER ──────────────────────────────────────────────
@@ -651,6 +760,7 @@ class GameNode:
                     weapon="Chaos Bolt", attack_roll=999, base_damage_roll=dmg,
                     target=target, is_spell=True,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                    ability_name="Chaos Bolt",
                 )
                 result = await self._route_attack_request(req, peer)
                 if result:
@@ -683,6 +793,7 @@ class GameNode:
                     weapon="Wild Magic Surge", attack_roll=999, base_damage_roll=dmg,
                     target=target, is_spell=True,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                    ability_name="Wild Magic Surge",
                 )
                 result = await self._route_attack_request(req, peer)
                 if result:
@@ -698,20 +809,51 @@ class GameNode:
         elif class_name == "paladin":
 
             if ab.name == "Divine Smite":
-                lp.set_effect("divine_smite", 30, "Divine Smite↑")
-                self.state.log_event("⚡ Divine Smite: próximo ataque +4d6 dano radiante!")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Divine Smite",
+                    status_effect="Divine Smite↑",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
+                )
+                await self._route_attack_request(req, None)
+                self.state.log_event("⚡ Divine Smite: próximo ataque +4d6 dano radiante! ")
                 used = True
 
             elif ab.name == "Lay on Hands":
-                lp.heal(25)
-                self.state.log_event(f"⚡ Lay on Hands: +25 HP ({lp.hp}/{lp.max_hp})")
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Lay on Hands",
+                    heal_amount=25,
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
+                )
+                await self._route_attack_request(req, None)
+                self.state.log_event("⚡ Lay on Hands: +25 HP ")
                 used = True
 
             elif ab.name == "Aura of Protection":
-                lp.set_effect("aura_of_protection", 15, "Aura +3AC")
-                self.state.log_event(
-                    f"⚡ Aura of Protection: AC+3 durante 15s! (AC={lp.armor_class})"
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Aura of Protection",
+                    status_effect="Aura +3AC",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event("⚡ Aura of Protection: AC+3 durante 15s! ")
                 used = True
 
         # ── MONK ──────────────────────────────────────────────────
@@ -735,6 +877,7 @@ class GameNode:
                         weapon="Unarmed Strike", attack_roll=999, base_damage_roll=dmg,
                         target=target, is_spell=False,
                         attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                        ability_name="Flurry of Blows",
                     )
                     result = await self._route_attack_request(req, peer)
                     if result:
@@ -746,10 +889,19 @@ class GameNode:
                 used = True
 
             elif ab.name == "Patient Defense":
-                lp.set_effect("patient_defense", 10, "Patient Defense")
-                self.state.log_event(
-                    f"👊 Patient Defense: AC+3 durante 10s! (AC={lp.armor_class})"
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Patient Defense",
+                    status_effect="Patient Defense",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event("👊 Patient Defense: AC+3 durante 10s! ")
                 used = True
 
             elif ab.name == "Ki Blast":
@@ -768,6 +920,7 @@ class GameNode:
                     weapon="Ki Blast", attack_roll=999, base_damage_roll=dmg,
                     target=target, is_spell=False,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                    ability_name="Ki Blast",
                 )
                 result = await self._route_attack_request(req, peer)
                 if result:
@@ -786,11 +939,20 @@ class GameNode:
                 if not target:
                     self.state.log_event("🌑 Uso: 1 <username>")
                     return
-                lp.marked_target = target
-                lp.set_effect("hex_mark", 25, "Hex")
-                self.state.log_event(
-                    f"🌑 Hex em {target}: +1d6 nec. em cada ataque durante 25s!"
+                # route hex mark to host (store as status string indicating marked target)
+                req = game_pb2.AttackRequest(
+                    attacker=self.username,
+                    attacker_class=lp.dnd_class.name,
+                    ability_name="Hex",
+                    status_effect=f"Hex:{target}",
+                    target=self.username,
+                    is_spell=False,
+                    attacker_x=lp.x,
+                    attacker_y=lp.y,
+                    effective_range=0,
                 )
+                await self._route_attack_request(req, None)
+                self.state.log_event(f"🌑 Hex em {target}: host-resolved")
                 used = True
 
             elif ab.name == "Eldritch Blast":
@@ -816,6 +978,7 @@ class GameNode:
                     weapon="Eldritch Blast", attack_roll=999, base_damage_roll=dmg,
                     target=target, is_spell=True,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                    ability_name="Eldritch Blast",
                 )
                 result = await self._route_attack_request(req, peer)
                 if result:
@@ -851,6 +1014,7 @@ class GameNode:
                     weapon="Life Drain", attack_roll=999, base_damage_roll=dmg,
                     target=target, is_spell=True,
                     attacker_x=lp.x, attacker_y=lp.y, effective_range=ab.ability_range,
+                    ability_name="Life Drain",
                 )
                 result = await self._route_attack_request(req, peer)
                 if result and result.hit:

@@ -48,7 +48,15 @@ message AttackRequest {
   string attacker_class = 7;
   int32 attacker_x = 8;
   int32 attacker_y = 9;
-  int32 effective_range = 1;
+  int32 effective_range = 10;
+
+  string ability_name = 11;
+  repeated string targets = 12;   
+  int32 aoe_center_x = 13;        
+  int32 aoe_center_y = 14;
+  int32 aoe_radius = 15;          
+  int32 heal_amount = 16;         
+  string status_effect = 17;      
 }
 
 message AttackResult {
