@@ -145,6 +145,58 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         self.state.log_event(f"\033[32mRenasceste em ({x},{y})!\033[0m")
         await self.node.broadcast_state()
 
+    async def _respawn_remote(self, username: str, seconds: int = 3):
+        await asyncio.sleep(seconds) #wait for n seconds to fulfill the respawn cooldown
+        
+        target = next((p for p in self.state.others.values() #get the player
+                       if p.username.lower() == username.lower()), None)
+        if not target:
+            return
+        
+        x, y = self.state.random_spawn() #respawn logic
+        target.hp = target.max_hp
+        target.alive = True
+        target.x, target.y = x, y
+        target.status_effects.clear()
+        self.state.log_event(f"\033[32m{target.username}\033[0m renasceu em ({x},{y})!")
+
+        # build new revived playerstate
+        ps = game_pb2.PlayerState(
+            username=target.username,
+            hp=target.hp,
+            max_hp=target.max_hp,
+            x=target.x,
+            y=target.y,
+            alive=target.alive,
+            class_name=target.class_name,
+            status_effects=target.status_effects,
+            armor_class=target.armor_class,
+            kills=target.kills,
+            deaths=target.deaths,
+            match_id=self.state.match_id,
+        )
+
+        # broadcast update
+        tasks = []
+        seen = set()
+        for nid, p in self.node.peers.items():
+            if nid == self.node.node_id:
+                continue
+            addr = p.get("grpc_addr")
+            if not addr:
+                continue
+            tasks.append(self.node._send(addr, lambda s, r: s.StateUpdate(r), ps))
+            seen.add(addr)
+
+        for _, o in self.state.others.items():
+            addr = getattr(o, "grpc_addr", "")
+            if addr and addr not in seen:
+                tasks.append(self.node._send(addr, lambda s, r: s.StateUpdate(r), ps))
+                seen.add(addr)
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     # ── STATE UPDATE ──────────────────────────────────────────────
 
     async def StateUpdate(self, request, context):
@@ -359,6 +411,13 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                 state.local.kills += (1 if died else 0)
             else:
                 attacker.kills += (1 if died else 0)
+                
+            # If player who isnt the host died, respawn them
+            if died and not targetIsHost:
+                try:
+                    asyncio.create_task(self._respawn_remote(target.username, 3))
+                except Exception:
+                    pass
         else:
             remaining = state.local.hp if targetIsHost else target.hp
 
