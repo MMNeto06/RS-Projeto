@@ -115,6 +115,7 @@ def _render_menu(username: str, current_class: DnDClass | None, lobby_code: str 
         )
 
 
+
 async def run_menu(
     username: str,
     initial_class_name: str | None,
@@ -128,155 +129,204 @@ async def run_menu(
     """
     current_class: DnDClass | None = get_class(initial_class_name) if initial_class_name else None
     _render_menu(username, current_class, node.lobby.current_lobby)
- 
-    while True:
-        try:
-            raw = await aioconsole.ainput(f"{_B}menu{_R}> ")
-        except (EOFError, KeyboardInterrupt):
-            return None
- 
-        parts = raw.strip().split()
-        if not parts:
-            _render_menu(username, current_class, node.lobby.current_lobby)
-            continue
- 
-        cmd = parts[0].lower()
- 
-        # ── quit ──────────────────────────────────────────────────
-        if cmd in ("quit", "q", "exit"):
-            print("\nAté à próxima!")
-            return None
- 
-        # ── class <nome> ──────────────────────────────────────────
-        elif cmd == "class":
-            if len(parts) < 2:
-                print(f"  {_RE}[!]{_R} Uso: class <nome>  (ex: class fighter)")
+
+    _game_started = asyncio.Event()
+
+    async def _lobby_watcher():
+        import json
+        from dht_keys import lobby_meta_key
+        while not _game_started.is_set():
+            await asyncio.sleep(1.5)
+            if not node.lobby.current_lobby:
                 continue
-            c = get_class(parts[1].lower())
-            if c:
-                current_class = c
-                _render_menu(username, current_class, node.lobby.current_lobby)
-                print(f"  {_G}✓{_R} Classe definida para {_B}{c.name}{_R}")
-            else:
-                print(f"  {_RE}[!]{_R} Classe desconhecida. Disponíveis: {', '.join(CLASSES)}")
- 
-        # ── info ──────────────────────────────────────────────────
-        elif cmd == "info":
-            if not current_class:
-                print(f"  {_RE}[!]{_R} Sem classe seleccionada.")
-            else:
-                print(f"\n  {_B}{current_class.name}{_R}")
-                print(
-                    f"  HP {current_class.hp_base}  AC {current_class.armor_class_base}  "
-                    f"Arma: {current_class.weapon}  Dano: {current_class.damage_dice}\n"
-                    f"  Ataque mod: +{current_class.attack_modifier}  "
-                    f"Dano mod: +{current_class.damage_modifier}\n"
-                )
-                for ab in current_class.abilities:
-                    spell = " [magia]" if ab.is_spell else ""
-                    cd    = f"  cooldown {ab.cooldown_secs}t" if ab.cooldown_secs else "  sempre disponível"
-                    print(f"  • {_B}{ab.name}{_R}{spell}  —  {ab.description}{_D}{cd}{_R}")
-                print()
- 
-        elif cmd == "lobby":
-            if len(parts) < 2:
-                print(
-                    f"  Subcomandos de lobby:\n"
-                    f"    lobby create <nome> <max>   — criar lobby\n"
-                    f"    lobby join <código>          — entrar num lobby\n"
-                    f"    lobby list                   — ver lobbies abertos\n"
-                    f"    lobby leave                  — sair do lobby\n"
-                    f"    lobby status                 — ver quem está pronto\n"
-                    f"    lobby start                  — iniciar (só o host)\n"
-                )
-                continue
- 
-            sub = parts[1].lower()
-            my_addr = f"{node.host}:{node.grpc_port}"
- 
-            if sub == "create":
-                if not current_class:
-                    print(f"  {_RE}[!]{_R} Escolhe uma classe antes de criar um lobby.")
-                    continue
-                if len(parts) < 4:
-                    print("  Uso: lobby create <nome> <maxJogadores>")
-                    continue
-                try:
-                    max_p = int(parts[3])
-                except ValueError:
-                    print("  [!] maxJogadores deve ser um número inteiro.")
-                    continue
-                await node.lobby.create(parts[2], max_p, my_addr)
-                #_render_menu(username, current_class, node.lobby.current_lobby)
- 
-            elif sub == "join":
-                if not current_class:
-                    print(f"  {_RE}[!]{_R} Escolhe uma classe antes de entrar num lobby.")
-                    continue
-                if len(parts) < 3:
-                    print("  Uso: lobby join <código>")
-                    continue
-                await node.lobby.join(parts[2].upper(), my_addr)
-                _render_menu(username, current_class, node.lobby.current_lobby)
- 
-            elif sub == "list":
-                await node.lobby.list_open()
- 
-            elif sub == "leave":
-                await node.lobby.leave()
-                _render_menu(username, current_class, node.lobby.current_lobby)
- 
-            elif sub == "status":
-                await node.lobby.status()
- 
-            elif sub == "start":
-                # Quando o host faz start, os non-hosts ficam a saber via:
-                #   1. LobbyNotification gRPC (imediato)
-                #   2. sync_loop a correr em background (polling DHT de 3 em 3s)
-                # Em ambos os casos, o menu deles recebe sinal para avançar.
-                if not current_class:
-                    print(f"  {_RE}[!]{_R} Escolhe uma classe primeiro.")
-                    continue
-                ok = await node.lobby.start()
-                if ok:
-                    # Host avança directamente para o jogo
-                    return current_class
- 
-            else:
-                print(f"  {_RE}[!]{_R} Subcomando desconhecido: '{sub}'")
- 
-        
-        elif cmd == "ready":
-            await node.lobby.set_ready(True)
- 
-        elif cmd == "unready":
-            await node.lobby.set_ready(False)
-  
-        # ── desconhecido ──────────────────────────────────────────
-        else:
-            print(
-                f"  {_RE}[!]{_R} Comando desconhecido. "
-                f"Usa: class | info | lobby ... | ready | join | quit"
-            )
- 
-        if node.lobby.current_lobby:
-            import json
             try:
-                from dht_keys import lobby_meta_key
                 raw_meta = await node.lobby.kad.get(
                     lobby_meta_key(node.lobby.current_lobby)
                 )
                 if raw_meta:
                     meta = json.loads(raw_meta)
-                    if meta.get("status") == "started" and current_class:
-                        print(
-                            f"\n  {_G}[Lobby] O jogo foi iniciado! A entrar…{_R}"
-                        )
-                        await asyncio.sleep(1)
-                        return current_class
+                    if meta.get("status") == "started":
+                        _game_started.set()
+                        return
             except Exception:
                 pass
 
+    watcher_task = asyncio.create_task(_lobby_watcher())
+    
+    try: 
+        while True:
+            input_task = asyncio.create_task(
+                aioconsole.ainput(f"{_B}menu{_R}> ")
+            )
+
+            done, pending = await asyncio.wait(
+                [input_task, asyncio.create_task(_game_started.wait())],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for t in pending:
+                t.cancel()
+
+            if _game_started.is_set():
+                if not current_class:
+                    current_class = get_class("fighter")
+                print(f"\n  {_G}[Lobby] O jogo foi iniciado! A entrar…{_R}")
+                await asyncio.sleep(0.5)
+                return current_class
+                
+            try:
+                raw = input_task.result()
+            except Exception:
+                return None
+
+    
+            parts = raw.strip().split()
+            if not parts:
+                _render_menu(username, current_class, node.lobby.current_lobby)
+                continue
+    
+            cmd = parts[0].lower()
+    
+            # ── quit ──────────────────────────────────────────────────
+            if cmd in ("quit", "q", "exit"):
+                print("\nAté à próxima!")
+                return None
+    
+            # ── class <nome> ──────────────────────────────────────────
+            elif cmd == "class":
+                if len(parts) < 2:
+                    print(f"  {_RE}[!]{_R} Uso: class <nome>  (ex: class fighter)")
+                    continue
+                c = get_class(parts[1].lower())
+                if c:
+                    current_class = c
+                    _render_menu(username, current_class, node.lobby.current_lobby)
+                    print(f"  {_G}✓{_R} Classe definida para {_B}{c.name}{_R}")
+                else:
+                    print(f"  {_RE}[!]{_R} Classe desconhecida. Disponíveis: {', '.join(CLASSES)}")
+    
+            # ── info ──────────────────────────────────────────────────
+            elif cmd == "info":
+                if not current_class:
+                    print(f"  {_RE}[!]{_R} Sem classe seleccionada.")
+                else:
+                    print(f"\n  {_B}{current_class.name}{_R}")
+                    print(
+                        f"  HP {current_class.hp_base}  AC {current_class.armor_class_base}  "
+                        f"Arma: {current_class.weapon}  Dano: {current_class.damage_dice}\n"
+                        f"  Ataque mod: +{current_class.attack_modifier}  "
+                        f"Dano mod: +{current_class.damage_modifier}\n"
+                    )
+                    for ab in current_class.abilities:
+                        spell = " [magia]" if ab.is_spell else ""
+                        cd    = f"  cooldown {ab.cooldown_secs}t" if ab.cooldown_secs else "  sempre disponível"
+                        print(f"  • {_B}{ab.name}{_R}{spell}  —  {ab.description}{_D}{cd}{_R}")
+                    print()
+    
+            elif cmd == "lobby":
+                if len(parts) < 2:
+                    print(
+                        f"  Subcomandos de lobby:\n"
+                        f"    lobby create <nome> <max>   — criar lobby\n"
+                        f"    lobby join <código>          — entrar num lobby\n"
+                        f"    lobby list                   — ver lobbies abertos\n"
+                        f"    lobby leave                  — sair do lobby\n"
+                        f"    lobby status                 — ver quem está pronto\n"
+                        f"    lobby start                  — iniciar (só o host)\n"
+                    )
+                    continue
+    
+                sub = parts[1].lower()
+                my_addr = f"{node.host}:{node.grpc_port}"
+    
+                if sub == "create":
+                    if not current_class:
+                        print(f"  {_RE}[!]{_R} Escolhe uma classe antes de criar um lobby.")
+                        continue
+                    if len(parts) < 4:
+                        print("  Uso: lobby create <nome> <maxJogadores>")
+                        continue
+                    try:
+                        max_p = int(parts[3])
+                    except ValueError:
+                        print("  [!] maxJogadores deve ser um número inteiro.")
+                        continue
+                    await node.lobby.create(parts[2], max_p, my_addr)
+                    #_render_menu(username, current_class, node.lobby.current_lobby)
+    
+                elif sub == "join":
+                    if not current_class:
+                        print(f"  {_RE}[!]{_R} Escolhe uma classe antes de entrar num lobby.")
+                        continue
+                    if len(parts) < 3:
+                        print("  Uso: lobby join <código>")
+                        continue
+                    await node.lobby.join(parts[2].upper(), my_addr)
+                    _render_menu(username, current_class, node.lobby.current_lobby)
+    
+                elif sub == "list":
+                    await node.lobby.list_open()
+    
+                elif sub == "leave":
+                    await node.lobby.leave()
+                    _render_menu(username, current_class, node.lobby.current_lobby)
+    
+                elif sub == "status":
+                    await node.lobby.status()
+    
+                elif sub == "start":
+                    # Quando o host faz start, os non-hosts ficam a saber via:
+                    #   1. LobbyNotification gRPC (imediato)
+                    #   2. sync_loop a correr em background (polling DHT de 3 em 3s)
+                    # Em ambos os casos, o menu deles recebe sinal para avançar.
+                    if not current_class:
+                        print(f"  {_RE}[!]{_R} Escolhe uma classe primeiro.")
+                        continue
+                    ok = await node.lobby.start()
+                    if ok:
+                        # Host avança directamente para o jogo
+                        return current_class
+    
+                else:
+                    print(f"  {_RE}[!]{_R} Subcomando desconhecido: '{sub}'")
+    
+            
+            elif cmd == "ready":
+                await node.lobby.set_ready(True)
+    
+            elif cmd == "unready":
+                await node.lobby.set_ready(False)
+    
+            # ── desconhecido ──────────────────────────────────────────
+            else:
+                print(
+                    f"  {_RE}[!]{_R} Comando desconhecido. "
+                    f"Usa: class | info | lobby ... | ready | join | quit"
+                )
+    
+            if node.lobby.current_lobby:
+                import json
+                try:
+                    from dht_keys import lobby_meta_key
+                    raw_meta = await node.lobby.kad.get(
+                        lobby_meta_key(node.lobby.current_lobby)
+                    )
+                    if raw_meta:
+                        meta = json.loads(raw_meta)
+                        if meta.get("status") == "started" and current_class:
+                            print(
+                                f"\n  {_G}[Lobby] O jogo foi iniciado! A entrar…{_R}"
+                            )
+                            await asyncio.sleep(1)
+                            return current_class
+                except Exception:
+                    pass
+    finally:
+        watcher_task.cancel()
+        try:
+            await watcher_task
+        except asyncio.CancelledError:
+            pass
 
 
 # ── ARGS ──────────────────────────────────────────────────────────
