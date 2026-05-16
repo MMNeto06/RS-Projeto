@@ -85,33 +85,43 @@ def _render_menu(username: str, current_class: DnDClass | None, lobby_code: str 
         )
         print(f"  Abilidades:")
         for ab in current_class.abilities:
-            cd = f"  {_D}(cooldown {ab.cooldown_secs} turnos){_R}" if ab.cooldown_secs else ""
+            cd = f"  {_D}(cooldown {ab.cooldown_secs}s){_R}" if ab.cooldown_secs else ""
             print(f"    • {_B}{ab.name}{_R} — {ab.description}{cd}")
     else:
         print(f"  Classe  : {_RE}(nenhuma — usa 'class <nome>' para escolher){_R}")
 
-
     print()
     print(list_classes())
-    print(
-        f"  {_B}Comandos:{_R}\n"
-        f"    {_C}class <nome>{_R}  — escolher/mudar classe\n"
-        f"    {_C}info{_R}          — detalhes da classe actual\n"
-        f"    {_G}join{_R}          — {_B}entrar no jogo{_R}\n"
-        f"    {_RE}quit{_R}          — sair\n"
-    )
 
     if lobby_code:
-        print(f"\n  {_M}Lobby activo : {_B}{lobby_code}{_R}")
+        # ── Dentro de um lobby ────────────────────────────────────
         print(
-            f"  {_D}  ready · unready · lobby status · lobby leave{_R}\n"
-            f"  {_D}  lobby start  (só o host, quando todos prontos){_R}"
+            f"  {_B}Comandos:{_R}\n"
+            f"    {_C}class <nome>{_R}          — escolher/mudar classe\n"
+            f"    {_C}info{_R}                  — detalhes da classe actual\n"
+            f"\n"
+            f"  {_B}{_M}Lobby activo : {lobby_code}{_R}\n"
+            f"    {_G}ready{_R}                 — marcar como pronto\n"
+            f"    {_G}unready{_R}               — cancelar prontidão\n"
+            f"    {_C}lobby status{_R}          — ver quem está pronto\n"
+            f"    {_C}lobby start{_R}           — {_B}iniciar jogo{_R} (só o host, quando todos prontos)\n"
+            f"    {_RE}lobby leave{_R}           — sair do lobby\n"
+            f"\n"
+            f"    {_RE}quit{_R}                  — sair do jogo\n"
         )
     else:
+        # ── Sem lobby ─────────────────────────────────────────────
         print(
-            f"\n  {_M}🎮 Lobbies{_R}\n"
-            f"  {_D}  lobby create <nome> <max>   · lobby join <código>{_R}\n"
-            f"  {_D}  lobby list{_R}"
+            f"  {_B}Comandos:{_R}\n"
+            f"    {_C}class <nome>{_R}              — escolher/mudar classe\n"
+            f"    {_C}info{_R}                      — detalhes da classe actual\n"
+            f"\n"
+            f"  {_B}{_M}🎮 Lobbies:{_R}\n"
+            f"    {_G}lobby create <nome> <max>{_R} — criar um novo lobby\n"
+            f"    {_G}lobby join <código>{_R}       — entrar num lobby existente\n"
+            f"    {_C}lobby list{_R}                — listar lobbies abertos\n"
+            f"\n"
+            f"    {_RE}quit{_R}                      — sair do jogo\n"
         )
 
 
@@ -301,7 +311,7 @@ async def run_menu(
             else:
                 print(
                     f"  {_RE}[!]{_R} Comando desconhecido. "
-                    f"Usa: class | info | lobby ... | ready | join | quit"
+                    f"Usa: class | info | lobby ... | ready | quit"
                 )
     
             if node.lobby.current_lobby:
