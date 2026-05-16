@@ -51,6 +51,7 @@ import argparse
 import sys
 import os
 import socket
+import time
 
 import aioconsole
 
@@ -449,6 +450,7 @@ async def run_menu(
                         print("  [!] maxJogadores deve ser um número inteiro.")
                         continue
                     await node.lobby.create(parts[2], max_p, my_addr)
+                    time.sleep(1.5)
                     _render_menu(username, current_class, node.lobby.current_lobby)
 
                 elif sub == "join":

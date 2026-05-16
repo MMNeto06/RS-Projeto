@@ -206,7 +206,7 @@ class LobbyManager:
  
         print(f"[Lobby] Lobby '{name}' criado com código \033[1m{code}\033[0m")
         print(f"[Lobby] Partilha este código com os teus amigos.")
-
+        print(f"[Lobby] Juntando ao lobby...")
         return code
 
 
