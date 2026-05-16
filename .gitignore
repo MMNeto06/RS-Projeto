@@ -1,2 +1,4 @@
 /game/__pycache__
 *.pyc
+/game/__pycache__
+game/__pycache__/game_node.cpython-312.pyc
