@@ -48,6 +48,71 @@ def roll(notation: str) -> int:
     return sum(random.randint(1, int(x)) for _ in range(int(n)))
 
 
+def _max_roll(notation: str) -> int:
+    """Devolve o valor máximo possível de uma notação de dados (e.g. '3d8' → 24)."""
+    if not notation:
+        return 0
+    n, x = notation.lower().split("d")
+    return int(n) * int(x)
+
+
+def theoretical_max_damage(cls: "DnDClass") -> int:
+    """
+    Calcula o dano máximo teórico por AttackRequest para uma classe.
+    Usado em validate_attack (host) para detectar trapaça.
+
+    Considera ataque básico + on_hit_modifiers activos, e o pior caso de cada
+    abilidade de dano. Para MULTI_HIT valida por hit individual (cada hit é um
+    AttackRequest separado). Adiciona margem de +2 para variação aleatória.
+
+    Esta função é a fonte de verdade: elimina a necessidade de manter
+    MAX_DAMAGE_BY_CLASS hardcoded em lobby_manager.py.
+    """
+    # ── Ataque básico ──────────────────────────────────────────────
+    base = _max_roll(cls.damage_dice) + cls.damage_modifier
+
+    # On-hit modifiers que só se aplicam a ataques básicos
+    basic_modifier_bonus = sum(
+        _max_roll(m.damage_dice) for m in cls.on_hit_modifiers
+        if m.damage_dice and m.basic_attack_only
+    )
+    # twin_weapon duplica o dado de arma base
+    twin_bonus = sum(base for m in cls.on_hit_modifiers if m.twin_weapon)
+    basic_max = base + basic_modifier_bonus + twin_bonus
+
+    # On-hit modifiers não-básicos (aplicam-se também a abilidades de dano)
+    non_basic_bonus = sum(
+        _max_roll(m.damage_dice) for m in cls.on_hit_modifiers
+        if m.damage_dice and not m.basic_attack_only
+    )
+
+    candidates = [basic_max]
+
+    for ab in cls.abilities:
+        if ab.effect is None:
+            continue
+        eff = ab.effect
+        k   = eff.kind
+
+        if k in (AbilityKind.TARGET_DAMAGE, AbilityKind.TARGET_DRAIN):
+            dmg = _max_roll(eff.damage_dice) + eff.damage_fixed + non_basic_bonus
+            candidates.append(dmg)
+
+        elif k == AbilityKind.MULTI_HIT:
+            # Cada hit chega como AttackRequest independente — validamos por hit
+            per_hit = _max_roll(eff.damage_dice) + eff.damage_fixed
+            candidates.append(per_hit)
+
+        elif k == AbilityKind.AOE_DAMAGE:
+            dmg = _max_roll(eff.damage_dice) + eff.damage_fixed
+            if eff.use_class_damage_modifier:
+                dmg += cls.damage_modifier
+            dmg += non_basic_bonus
+            candidates.append(dmg)
+
+    return max(candidates) + 2  # margem anti-trapaça
+
+
 # ── TIPOS DE EFEITO ────────────────────────────────────────────────
 
 class AbilityKind(str, Enum):
@@ -717,6 +782,12 @@ CLASSES: dict[str, DnDClass] = {
 
 def get_class(name: str) -> DnDClass | None:
     return CLASSES.get(name.lower())
+
+
+def max_damage_for_class(name: str) -> int:
+    """Devolve o dano máximo teórico para uma classe pelo nome. Fallback = 50."""
+    cls = get_class(name)
+    return theoretical_max_damage(cls) if cls else 50
 
 
 def list_classes() -> str:

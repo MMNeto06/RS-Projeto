@@ -25,42 +25,10 @@ from dht_keys import (
 import game_pb2
 import game_pb2_grpc
 
+from dnd_classes import max_damage_for_class
+
 from kademlia.node import Node
 from kademlia.utils import digest
-
-# ── Limites de dano por classe (usados pelo host na validação) ────────────────
-# Valores máximos teóricos por ataque (incluindo bónus de abilidades).
-#
-# Como calcular:
-#   max_base  = max(dado) + damage_modifier
-#   max_skill = maior dado de ability que adiciona dano ao ataque
-#   limite    = max_base + max_skill  (+2 de margem para arredondamento)
-#
-# Classe       Pior caso                                            Teórico  Limite
-# ─────────────────────────────────────────────────────────────────────────────────
-# fighter    3d8(24)+3 + Action Surge 2d8(16)                    =  43      45
-# wizard     Fireball 5d6(30)                                     =  30      32
-# rogue      2d6(12)+2 + Sneak Attack 2d6(12)                    =  26      28
-# cleric     Mace 2d6(12)+2  (Sacred Flame 1d8=8 é menos)        =  14      16
-# ranger     1d8(8)+3 + Hunter's Mark 1d6(6)                     =  17      20
-# sorcerer   Wild Magic Surge 5d4(20)                             =  20      22
-# paladin    2d6(12)+4 + Divine Smite 4d6(24)                    =  40      42
-# monk       Ki Blast 2d8(16)                                     =  16      18
-# warlock    Eldritch Blast 2d8(16) + Hex 1d6(6)                 =  22      24
-MAX_DAMAGE_BY_CLASS: dict[str, int] = {
-    "fighter":  45,
-    "wizard":   32,
-    "rogue":    28,
-    "cleric":   16,
-    "ranger":   20,
-    "sorcerer": 22,
-    "paladin":  42,
-    "monk":     18,
-    "warlock":  24,
-}
-# Fallback quando a classe é desconhecida
-DEFAULT_MAX_DAMAGE = 50
-
 
 class LobbyManager:
     """
@@ -554,28 +522,25 @@ class LobbyManager:
                         weapon: str, is_spell: bool) -> tuple[bool, str]:
         """
         Chamado no host para validar um ataque antes de este ser aplicado.
- 
+
+        O limite de dano é calculado dinamicamente a partir da definição da classe
+        em dnd_classes.py — não há necessidade de manter valores hardcoded aqui.
+
         Returns
         -------
         (approved: bool, reason: str)
         """
-        class_lower  = attacker_class.lower()
-        max_dmg      = MAX_DAMAGE_BY_CLASS.get(class_lower, DEFAULT_MAX_DAMAGE)
- 
+        max_dmg = max_damage_for_class(attacker_class)
+
         if damage < 0:
             return False, f"Dano negativo não permitido ({damage})."
- 
+
         if damage > max_dmg:
             return False, (
                 f"Dano {damage} excede o máximo permitido para {attacker_class} "
                 f"({max_dmg}). Possível trapaça!"
             )
- 
-        # Aqui podem ser adicionadas validações adicionais:
-        # - cooldowns (se o host guardar estado dos timers)
-        # - weapons válidas por classe
-        # - etc. -> MIGUEL pls help me
- 
+
         return True, "ok"
     
     async def request_validation(self, attack_req: "game_pb2.AttackRequest") -> bool:

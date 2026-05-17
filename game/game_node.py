@@ -7,6 +7,8 @@ import asyncio
 import time
 import sys
 import os
+import json
+import logging
 
 import grpc
 from kademlia.network import Server as KademliaNode
@@ -17,7 +19,7 @@ import game_pb2
 import game_pb2_grpc
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from dht_keys import addr_key, username_key
+from dht_keys import addr_key, username_key, lobby_meta_key
 
 from dnd_classes import AbilityEffect, AbilityKind, DnDClass, roll, get_class
 from game_state   import GameState, LocalPlayer, MatchPhase, MAP_W, MAP_H
@@ -25,14 +27,11 @@ from game_servicer import GameServicer
 from renderer      import render_frame
 from input_reader  import InputReader
 from lobby_manager import LobbyManager
+from utils         import chebyshev
+from proto_helpers import local_player_to_proto
 
 # Segundos de exibição do ecrã de fim antes de reiniciar
 _MATCH_END_PAUSE = 8
-
-
-def _chebyshev(x1: int, y1: int, x2: int, y2: int) -> int:
-    """Distância de Chebyshev entre dois pontos (max(|dx|, |dy|))."""
-    return max(abs(x1 - x2), abs(y1 - y2))
 
 
 class GameNode:
@@ -205,7 +204,7 @@ class GameNode:
         if target_state is None:
             return True
         lp   = self.state.local
-        dist = _chebyshev(lp.x, lp.y, target_state.x, target_state.y)
+        dist = chebyshev(lp.x, lp.y, target_state.x, target_state.y)
         if dist > effective_range:
             self.state.log_event(
                 f"[!] {target_username} está fora de alcance "
@@ -219,20 +218,7 @@ class GameNode:
     async def broadcast_state(self):
         lp = self.state.local
         lp.tick_effects()   # limpa efeitos expirados antes de enviar
-        pb = game_pb2.PlayerState(
-            username=lp.username,
-            hp=lp.hp,
-            max_hp=lp.max_hp,
-            x=lp.x,
-            y=lp.y,
-            alive=lp.alive,
-            class_name=lp.dnd_class.name,
-            status_effects=lp.status_effects,
-            armor_class=lp.armor_class,
-            kills=lp.kills,
-            deaths=lp.deaths,
-            match_id=self.state.match_id,
-        )
+        pb = local_player_to_proto(lp, self.state.match_id)
         tasks = [
             self._send(p["grpc_addr"], lambda s, r: s.StateUpdate(r), pb)
             for nid, p in self.peers.items()
@@ -259,13 +245,7 @@ class GameNode:
 
     # ── ON-HIT MODIFIER ENGINE ────────────────────────────────────
 
-    def _apply_on_hit_modifiers(
-        self,
-        target_username: str,
-        attack_roll: int,
-        damage_roll: int,
-        is_ability: bool = False,
-    ) -> tuple[int, int, list[str]]:
+    def _apply_on_hit_modifiers(self, target_username: str, attack_roll: int, damage_roll: int, is_ability: bool = False,) -> tuple[int, int, list[str]]:
         """
         Percorre os OnHitModifiers da classe e aplica os activos ao ataque.
 
@@ -642,7 +622,7 @@ class GameNode:
         lp      = self.state.local
         nearby  = [
             p for p in self.state.others.values()
-            if p.alive and _chebyshev(lp.x, lp.y, p.x, p.y) <= eff.aoe_radius
+            if p.alive and chebyshev(lp.x, lp.y, p.x, p.y) <= eff.aoe_radius
         ]
         if not nearby:
             self.state.log_event(
@@ -754,16 +734,12 @@ class GameNode:
                 continue
             try:
                 raw = await self.lobby.kad.get(
-                    __import__("dht_keys", fromlist=["lobby_meta_key"]).lobby_meta_key(
-                        self.lobby.current_lobby
-                    )
+                    lobby_meta_key(self.lobby.current_lobby)
                 )
                 if not raw:
                     continue
-                import json
                 meta = json.loads(raw)
                 if meta.get("status") == "started":
-                    from game_state import MatchPhase
                     if self.state.phase != MatchPhase.ACTIVE:
                         self.state.phase = MatchPhase.ACTIVE
                         self.state.log_event("🎮 O host iniciou o jogo!")
@@ -888,9 +864,7 @@ class GameNode:
                         ok = await self.lobby.start() 
 
                         if ok: 
-                            self.state.phase = __import__(
-                                "game_state", fromlist=["MatchPhase"]
-                            ).MatchPhase.ACTIVE
+                            self.state.phase = MatchPhase.ACTIVE
                             self.state.log_event("🎮 Jogo iniciado pelo host!")
                     
                     elif sub_cmd == "status": 
@@ -983,7 +957,6 @@ class GameNode:
     # ── ARRANQUE ──────────────────────────────────────────────────
 
     async def run(self):
-        import logging
         logging.getLogger("kademlia").setLevel(logging.ERROR)
 
         await self.start_kademlia()

@@ -5,17 +5,14 @@ Implementação dos métodos gRPC definidos no game.proto.
 
 import time
 import asyncio
+import json
 
 import game_pb2
 import game_pb2_grpc
+from game_pb2 import GameEvent
 from game_state import GameState, MatchPhase, RemotePlayer
-
-import json
-
-
-def _chebyshev(x1: int, y1: int, x2: int, y2: int) -> int:
-    """Distância de Chebyshev entre dois pontos num grid (max de |dx|, |dy|)."""
-    return max(abs(x1 - x2), abs(y1 - y2))
+from utils import chebyshev
+from proto_helpers import local_player_to_proto, remote_player_to_proto
 
 
 class GameServicer(game_pb2_grpc.GameServiceServicer):
@@ -23,6 +20,17 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     def __init__(self, state: GameState, node):
         self.state = state
         self.node  = node
+
+    def _lookup_player(self, username: str) -> tuple:
+        """
+        Devolve (player_obj, is_local) para um username.
+        player_obj é LocalPlayer se is_local=True, RemotePlayer caso contrário.
+        Devolve (None, False) se o jogador não for encontrado.
+        """
+        if username == self.state.local.username:
+            return self.state.local, True
+        player = self.state.others.get(username)
+        return player, False
 
     # ── CHAT ──────────────────────────────────────────────────────
 
@@ -80,7 +88,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         # O check principal acontece no atacante (game_node), mas validamos
         # aqui também com a posição que o atacante declarou.
         if request.effective_range > 0:
-            dist = _chebyshev(
+            dist = chebyshev(
                 request.attacker_x, request.attacker_y,
                 local.x, local.y,
             )
@@ -160,21 +168,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         target.status_effects.clear()
         self.state.log_event(f"\033[32m{target.username}\033[0m renasceu em ({x},{y})!")
 
-        # build new revived playerstate
-        ps = game_pb2.PlayerState(
-            username=target.username,
-            hp=target.hp,
-            max_hp=target.max_hp,
-            x=target.x,
-            y=target.y,
-            alive=target.alive,
-            class_name=target.class_name,
-            status_effects=target.status_effects,
-            armor_class=target.armor_class,
-            kills=target.kills,
-            deaths=target.deaths,
-            match_id=self.state.match_id,
-        )
+        ps = remote_player_to_proto(target, self.state.match_id)
 
         # broadcast update
         tasks = []
@@ -206,8 +200,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     # ── BROADCAST EVENT ───────────────────────────────────────────
 
     async def BroadcastEvent(self, request, context):
-        from game_pb2 import GameEvent
-
         if request.type == GameEvent.PLAYER_DIED:
             self.state.log_event(f"💀 \033[31m{request.payload}\033[0m morreu!")
 
@@ -326,14 +318,8 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         state = self.state
         node = self.node
 
-        # lookup users to extract stats
-        def user_lookup(username):
-            if username == state.local.username:
-                return state.local, True
-            return state.others.get(username), False
-
-        attacker, attackerIsHost = user_lookup(request.attacker)
-        target, targetIsHost = user_lookup(request.target)
+        attacker, attackerIsHost = self._lookup_player(request.attacker)
+        target, targetIsHost = self._lookup_player(request.target)
 
         if attacker is None:
             self.state.log_event(f"[Host] Ataque de desconhecido '{request.attacker}' — rejeitado.")
@@ -371,7 +357,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             tx, ty = target.x, target.y
         
             
-        dist = _chebyshev(ax, ay, tx, ty)
+        dist = chebyshev(ax, ay, tx, ty)
         if dist > request.effective_range:
             self.state.log_event(
                 f"{request.attacker} tentou atacar fora de alcance (dist={dist}, range={request.effective_range}) — rejeitado."
@@ -423,35 +409,9 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         # create the target playerstate for broadcast
         if targetIsHost:
-            ps_target = game_pb2.PlayerState(
-                username=state.local.username,
-                hp=state.local.hp,
-                max_hp=state.local.max_hp,
-                x=state.local.x,
-                y=state.local.y,
-                alive=state.local.alive,
-                class_name=state.local.dnd_class.name,
-                status_effects=state.local.status_effects,
-                armor_class=state.local.armor_class,
-                kills=state.local.kills,
-                deaths=state.local.deaths,
-                match_id=state.match_id,
-            )
+            ps_target = local_player_to_proto(state.local, state.match_id)
         else:
-            ps_target = game_pb2.PlayerState(
-                username=target.username,
-                hp=target.hp,
-                max_hp=target.max_hp,
-                x=target.x,
-                y=target.y,
-                alive=target.alive,
-                class_name=target.class_name,
-                status_effects=target.status_effects,
-                armor_class=target.armor_class,
-                kills=target.kills,
-                deaths=target.deaths,
-                match_id=state.match_id,
-            )
+            ps_target = remote_player_to_proto(target, state.match_id)
 
         # Broadcast target state
         tasks = []
@@ -465,179 +425,3 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         return game_pb2.AttackResult(hit=hit, damage_dealt=dmg, target_hp_remaining=remaining, status_effect="dead" if died else "", target_died=died)
-    
-
-
-    async def resolve_ability(self, request, context):
-        state = self.state
-        node = self.node
-
-        # lookup users to extract player obj
-        def user_lookup(username):
-            if username == state.local.username:
-                return state.local, True
-            return state.others.get(username), False
-
-        attacker, attackerIsHost = user_lookup(request.attacker)
-        if attacker is None:
-            self.state.log_event(f"[Host] Habilidade de desconhecido '{request.attacker}' — rejeitada.")
-            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
-
-        # Validate ability 
-        approved, reason = node.lobby.validate_attack(
-            attacker_class=request.attacker_class,
-            damage=request.base_damage_roll,
-            weapon=(getattr(request, 'ability_name', '') or request.weapon),
-            is_spell=request.is_spell,
-        )
-        if not approved:
-            self.state.log_event(
-                f"[Host] ⚠ Habilidade rejeitada de {request.attacker} ({request.attacker_class}): {reason}"
-            )
-            
-            # return current hp
-            if getattr(request, 'target', '') == state.local.username:
-                cur = state.local.hp
-            else:
-                t = state.others.get(getattr(request, 'target', ''))
-                cur = t.hp if t else 0
-            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=cur, target_died=False)
-
-        # Build affected set: explicit targets > AOE > single target
-        affected = set()
-        if getattr(request, 'targets', None):
-            affected.update(request.targets)
-        elif getattr(request, 'aoe_radius', 0) and getattr(request, 'aoe_radius', 0) > 0:
-            cx = getattr(request, 'aoe_center_x', request.attacker_x)
-            cy = getattr(request, 'aoe_center_y', request.attacker_y)
-            r = request.aoe_radius
-            # include local
-            if _chebyshev(cx, cy, state.local.x, state.local.y) <= r:
-                affected.add(state.local.username)
-            for p in state.others.values():
-                try:
-                    if _chebyshev(cx, cy, p.x, p.y) <= r:
-                        affected.add(p.username)
-                except Exception:
-                    continue
-        else:
-            if getattr(request, 'target', ''):
-                affected.add(request.target)
-
-        if not affected:
-            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
-
-        ps_updates = []
-        total_damage = 0
-        any_hit = False
-        last_remaining = 0
-        any_died = False
-
-        for uname in list(affected):
-            tgt, tgtIsHost = user_lookup(uname)
-            if tgt is None:
-                self.state.log_event(f"[Host] Habilidade alvo desconhecido '{uname}' — ignorado.")
-                continue
-
-            # heal vs damage
-            heal_amt = getattr(request, 'heal_amount', 0) or 0
-            dmg = 0
-            died = False
-
-            if heal_amt > 0:
-                tgt.hp = min(tgt.max_hp, getattr(tgt, 'hp', 0) + heal_amt)
-                last_remaining = tgt.hp
-            else:
-                # determine hit (allow auto-hit roll 999)
-                target_ac = getattr(tgt, 'armor_class', 0)
-                hit = (getattr(request, 'attack_roll', 0) == 999) or (getattr(request, 'attack_roll', 0) >= target_ac)
-                if not hit:
-                    # miss: continue but include zero-damage update for visual consistency
-                    last_remaining = tgt.hp
-                    continue
-                dmg = max(1, getattr(request, 'base_damage_roll', 0))
-                total_damage += dmg
-                any_hit = True
-
-                if tgtIsHost:
-                    last_remaining = state.local.take_damage(dmg)
-                    died = not state.local.alive
-                    if died:
-                        asyncio.create_task(self._respawn_after(3))
-                else:
-                    tgt.hp = max(0, tgt.hp - dmg)
-                    last_remaining = tgt.hp
-                    if tgt.hp == 0 and tgt.alive:
-                        tgt.alive = False
-                        tgt.deaths += 1
-                        died = True
-                        try:
-                            asyncio.create_task(self._respawn_remote(tgt.username, 3))
-                        except Exception:
-                            pass
-
-                # assign kill credit
-                if died:
-                    any_died = True
-                    if attackerIsHost:
-                        state.local.kills += 1
-                    else:
-                        attacker.kills += 1
-
-            # apply status effect if present
-            if getattr(request, 'status_effect', ''):
-                try:
-                    se = request.status_effect
-                    if hasattr(tgt, 'status_effects'):
-                        if se not in tgt.status_effects:
-                            tgt.status_effects.append(se)
-                except Exception:
-                    pass
-
-            # build PlayerState for this target
-            ps = game_pb2.PlayerState(
-                username=tgt.username,
-                hp=tgt.hp,
-                max_hp=tgt.max_hp,
-                x=tgt.x,
-                y=tgt.y,
-                alive=getattr(tgt, 'alive', True),
-                class_name=getattr(tgt, 'class_name', state.local.dnd_class.name),
-                status_effects=getattr(tgt, 'status_effects', []),
-                armor_class=getattr(tgt, 'armor_class', 0),
-                kills=getattr(tgt, 'kills', 0),
-                deaths=getattr(tgt, 'deaths', 0),
-                match_id=state.match_id,
-            )
-            ps_updates.append(ps)
-
-        # Broadcast all updates (one StateUpdate per affected player)
-        tasks = []
-        seen = set()
-        for ps in ps_updates:
-            for nid, p in node.peers.items():
-                if nid == node.node_id:
-                    continue
-                addr = p.get('grpc_addr')
-                if not addr:
-                    continue
-                tasks.append(node._send(addr, lambda s, r: s.StateUpdate(r), ps))
-                seen.add(addr)
-
-            for _, o in state.others.items():
-                addr = getattr(o, 'grpc_addr', '')
-                if addr and addr not in seen:
-                    tasks.append(node._send(addr, lambda s, r: s.StateUpdate(r), ps))
-                    seen.add(addr)
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Summary result: if single target return its values, otherwise aggregate
-        return game_pb2.AttackResult(
-            hit=any_hit,
-            damage_dealt=total_damage,
-            target_hp_remaining=last_remaining,
-            status_effect=('' if not getattr(request, 'status_effect', '') else request.status_effect),
-            target_died=any_died,
-        )
