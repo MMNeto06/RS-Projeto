@@ -57,7 +57,8 @@ import aioconsole
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from dnd_classes import CLASSES, get_class, list_classes, DnDClass
+from dnd_classes import CLASSES, get_class, DnDClass
+from renderer    import list_classes
 from game_node   import GameNode
 
 import logging

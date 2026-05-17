@@ -34,6 +34,7 @@ O renderer recebe `input_line` (str) que vem de InputReader.prompt_line.
 
 import sys
 from game_state import GameState, MatchPhase, MAP_W, MAP_H
+from dnd_classes import CLASSES
 
 # ── CORES ANSI ────────────────────────────────────────────────────
 
@@ -234,3 +235,16 @@ def render_frame(
         sys.stdout.flush()
 
     return output
+
+# ── LISTA DE CLASSES ──────────────────────────────────────────────
+
+def list_classes() -> str:
+    """Lista formatada de todas as classes disponíveis, para o menu pré-jogo."""
+    lines = ["\n[Classes disponíveis]"]
+    for key, c in CLASSES.items():
+        lines.append(
+            f"  {BOLD}{c.name:<10}{RESET}  HP:{c.hp_base:>3}  "
+            f"AC:{c.armor_class_base:>2}  Range:{c.attack_range:>2}  "
+            f"Arma: {c.weapon} ({c.damage_dice})"
+        )
+    return "\n".join(lines) + "\n"

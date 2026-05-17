@@ -63,17 +63,22 @@ class LocalPlayer:
 
     @property
     def armor_class(self) -> int:
-        """AC base, modificada por efeitos activos."""
+        """AC base, modificada por efeitos activos.
+
+        Percorre as abilities da classe e aplica os modificadores de AC
+        (ac_set, ac_bonus) das que estiverem activas. Sem strings mágicas:
+        cada ability declara os seus próprios modificadores em AbilityEffect.
+        """
         base = self.dnd_class.armor_class_base
-        if self.is_effect_active("mage_armor"):
-            return max(base, 13)
-        if self.is_effect_active("fortified"):
-            return base + 2
-        if self.is_effect_active("patient_defense"):
-            return base + 3
-        if self.is_effect_active("aura_of_protection"):
-            return base + 3
-        return base
+        ac   = base
+        active_keys = {k for k in self.active_effects if self.is_effect_active(k)}
+        for ab in self.dnd_class.abilities:
+            if ab.effect and ab.effect.effect_key in active_keys:
+                eff = ab.effect
+                if eff.ac_set:
+                    ac = max(ac, eff.ac_set)
+                ac += eff.ac_bonus
+        return ac
 
     # ── COOLDOWNS ─────────────────────────────────────────────────
 

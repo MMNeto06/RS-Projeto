@@ -141,6 +141,10 @@ class AbilityEffect:
     effect_label:    str   = ""    # label em LocalPlayer.status_effects
     effect_duration: float = 0.0   # segundos; 0 = não expira sozinho (consume-on-hit)
 
+    # ── SELF_BUFF AC modifiers ─────────────────────────────────────
+    ac_bonus: int = 0   # bónus aditivo à AC enquanto o efeito estiver activo
+    ac_set:   int = 0   # AC mínima (e.g. Mage Armor → max(base, 13))
+
     # ── TARGET_DAMAGE / TARGET_DRAIN / MULTI_HIT / AOE_DAMAGE ────
     damage_dice:  str  = ""    # e.g. "3d6"
     damage_fixed: int  = 0     # bónus fixo ao dano
@@ -290,6 +294,7 @@ CLASSES: dict[str, DnDClass] = {
                     effect_key="fortified",
                     effect_label="Fortified",
                     effect_duration=15.0,
+                    ac_bonus=2,
                     emoji="⚔",
                 ),
             ),
@@ -331,6 +336,7 @@ CLASSES: dict[str, DnDClass] = {
                     effect_key="mage_armor",
                     effect_label="Mage Armor",
                     effect_duration=30.0,
+                    ac_set=13,
                     emoji="🔮",
                 ),
             ),
@@ -651,6 +657,7 @@ CLASSES: dict[str, DnDClass] = {
                     effect_key="aura_of_protection",
                     effect_label="Aura +3AC",
                     effect_duration=15.0,
+                    ac_bonus=3,
                     emoji="⚡",
                 ),
             ),
@@ -690,6 +697,7 @@ CLASSES: dict[str, DnDClass] = {
                     effect_key="patient_defense",
                     effect_label="Patient Defense",
                     effect_duration=10.0,
+                    ac_bonus=3,
                     emoji="👊",
                 ),
             ),
@@ -788,14 +796,3 @@ def max_damage_for_class(name: str) -> int:
     """Devolve o dano máximo teórico para uma classe pelo nome. Fallback = 50."""
     cls = get_class(name)
     return theoretical_max_damage(cls) if cls else 50
-
-
-def list_classes() -> str:
-    lines = ["\n[Classes disponíveis]"]
-    for key, c in CLASSES.items():
-        lines.append(
-            f"  \033[1m{c.name:<10}\033[0m  HP:{c.hp_base:>3}  "
-            f"AC:{c.armor_class_base:>2}  Range:{c.attack_range:>2}  "
-            f"Arma: {c.weapon} ({c.damage_dice})"
-        )
-    return "\n".join(lines) + "\n"
