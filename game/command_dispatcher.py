@@ -13,6 +13,7 @@ Uso:
 
 from __future__ import annotations
 from typing import TYPE_CHECKING
+from game_state import MatchPhase
 
 if TYPE_CHECKING:
     from game_node import GameNode
@@ -133,7 +134,6 @@ class CommandDispatcher:
             await node.lobby.leave()
 
         elif sub == "start":
-            from game_state import MatchPhase
             ok = await node.lobby.start()
             if ok:
                 node.state.phase = MatchPhase.ACTIVE

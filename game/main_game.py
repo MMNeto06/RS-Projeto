@@ -52,14 +52,19 @@ import sys
 import os
 import socket
 import time
-
+import json
 import aioconsole
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dnd_classes import CLASSES, get_class, DnDClass
-from renderer    import list_classes
-from game_node   import GameNode
+from renderer import list_classes
+from game_node import GameNode
+from dht_keys import lobby_meta_key, username_key, addr_key
+import game_pb2
+import game_pb2_grpc
+import grpc
+
 
 import logging
 
@@ -198,10 +203,6 @@ async def _username_is_free(node: "GameNode", name: str) -> bool:
        - Sem resposta → entrada obsoleta → consideramos livre.
        - Com resposta → username realmente em uso.
     """
-    import game_pb2
-    import game_pb2_grpc
-    import grpc
-    from dht_keys import username_key, addr_key
 
     existing_id = await node.kad.get(username_key(name))
     if not existing_id:
@@ -315,8 +316,6 @@ async def run_menu(
     _game_started = asyncio.Event()
 
     async def _lobby_watcher():
-        import json
-        from dht_keys import lobby_meta_key
         while not _game_started.is_set():
             await asyncio.sleep(1.5)
             if not node.lobby.current_lobby:
@@ -498,9 +497,7 @@ async def run_menu(
                 )
 
             if node.lobby.current_lobby:
-                import json
                 try:
-                    from dht_keys import lobby_meta_key
                     raw_meta = await node.lobby.kad.get(
                         lobby_meta_key(node.lobby.current_lobby)
                     )
@@ -708,7 +705,6 @@ async def main():
     node.state.local.hp        = chosen_class.hp_base
 
     if node.lobby.current_lobby:
-        import time
         from game_state import MatchPhase
         node.state.phase      = MatchPhase.ACTIVE
         node.state.start_time = time.time()
@@ -717,7 +713,6 @@ async def main():
     await node.input_loop()
 
     # ── 7. Notificar peers da saída ───────────────────────────────
-    import game_pb2
     # Usa node.username (pode ter mudado em relação a args.username original)
     leave_req = game_pb2.LeaveNotification(username=node.username)
     tasks = [
