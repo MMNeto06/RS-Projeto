@@ -64,7 +64,7 @@ from dht_keys import lobby_meta_key, username_key, addr_key
 import game_pb2
 import game_pb2_grpc
 import grpc
-
+from lobby.lobby_enums import LobbyStatus
 
 import logging
 
@@ -311,26 +311,20 @@ async def run_menu(
     Devolve a DnDClass escolhida ou None se o utilizador saiu.
     """
     current_class: DnDClass | None = get_class(initial_class_name) if initial_class_name else get_class("fighter")
-    _render_menu(username, current_class, node.lobby.current_lobby)
+    _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
 
     _game_started = asyncio.Event()
 
     async def _lobby_watcher():
         while not _game_started.is_set():
             await asyncio.sleep(1.5)
-            if not node.lobby.current_lobby:
+            if not node.lobby.session:
                 continue
-            try:
-                raw_meta = await node.lobby.kad.get(
-                    lobby_meta_key(node.lobby.current_lobby)
-                )
-                if raw_meta:
-                    meta = json.loads(raw_meta)
-                    if meta.get("status") == "started":
-                        _game_started.set()
-                        return
-            except Exception:
-                pass
+
+            lobby = await node.lobby.repo.get_lobby(node.lobby.session.code)
+            if lobby and lobby.status == LobbyStatus.STARTED:
+                _game_started.set()
+                return 
 
     watcher_task = asyncio.create_task(_lobby_watcher())
 
@@ -362,7 +356,7 @@ async def run_menu(
 
             parts = raw.strip().split()
             if not parts:
-                _render_menu(username, current_class, node.lobby.current_lobby)
+                _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
                 continue
 
             cmd = parts[0].lower()
@@ -379,7 +373,7 @@ async def run_menu(
                 if not new_name:
                     print(f"  {_RE}[!]{_R} Username não pode ser vazio.")
                     continue
-                if node.lobby.current_lobby:
+                if node.lobby.session:
                     print(f"  {_RE}[!]{_R} Não podes mudar o nome enquanto estás num lobby.")
                     continue
                 print(f"  {_D}A verificar disponibilidade…{_R}")
@@ -390,7 +384,7 @@ async def run_menu(
                 node.username = new_name
                 node.state.local.username = new_name
                 await node.register_self()
-                _render_menu(username, current_class, node.lobby.current_lobby)
+                _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
 
             elif cmd == "class":
                 if len(parts) < 2:
@@ -399,7 +393,7 @@ async def run_menu(
                 c = get_class(parts[1].lower())
                 if c:
                     current_class = c
-                    _render_menu(username, current_class, node.lobby.current_lobby)
+                    _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
                 else:
                     print(f"  {_RE}[!]{_R} Classe desconhecida: '{parts[1]}'")
                     print(list_classes())
@@ -451,7 +445,7 @@ async def run_menu(
                         continue
                     await node.lobby.create(parts[2], max_p, my_addr)
                     time.sleep(1.5)
-                    _render_menu(username, current_class, node.lobby.current_lobby)
+                    _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
 
                 elif sub == "join":
                     if not current_class:
@@ -461,14 +455,14 @@ async def run_menu(
                         print("  Uso: lobby join <código>")
                         continue
                     await node.lobby.join(parts[2].upper(), my_addr)
-                    _render_menu(username, current_class, node.lobby.current_lobby)
+                    _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
 
                 elif sub == "list":
                     await node.lobby.list_open()
 
                 elif sub == "leave":
                     await node.lobby.leave()
-                    _render_menu(username, current_class, node.lobby.current_lobby)
+                    _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
 
                 elif sub == "status":
                     await node.lobby.status()
@@ -496,19 +490,13 @@ async def run_menu(
                     f"Usa: name | class | info | lobby ... | ready | quit"
                 )
 
-            if node.lobby.current_lobby:
-                try:
-                    raw_meta = await node.lobby.kad.get(
-                        lobby_meta_key(node.lobby.current_lobby)
-                    )
-                    if raw_meta:
-                        meta = json.loads(raw_meta)
-                        if meta.get("status") == "started" and current_class:
-                            print(f"\n  {_G}[Lobby] O jogo foi iniciado! A entrar…{_R}")
-                            await asyncio.sleep(1)
-                            return current_class
-                except Exception:
-                    pass
+            if node.lobby.session:
+                lobby = await node.lobby.repo.get_lobby(node.lobby.session.code)
+                if lobby and lobby.status == LobbyStatus.STARTED and current_class:
+                    print(f"\n  {_G}[Lobby] O jogo foi iniciado! A entrar…{_R}")
+                    await asyncio.sleep(1)
+                    return current_class
+
     finally:
         watcher_task.cancel()
         try:
@@ -704,11 +692,11 @@ async def main():
     node.state.local.dnd_class = chosen_class
     node.state.local.hp        = chosen_class.hp_base
 
-    if node.lobby.current_lobby:
+    if node.lobby.session:
         from game_state import MatchPhase
         node.state.phase      = MatchPhase.ACTIVE
         node.state.start_time = time.time()
-        node.state.match_id   = node.lobby.current_lobby
+        node.state.match_id   = node.lobby.session.code
 
     await node.input_loop()
 

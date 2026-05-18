@@ -26,7 +26,7 @@ from game_state   import GameState, LocalPlayer, MatchPhase, MAP_W, MAP_H
 from game_servicer import GameServicer
 from renderer      import render_frame
 from input_reader  import InputReader
-from lobby_manager import LobbyManager
+from game.lobby.lobby_manager import LobbyManager
 from proto_helpers      import local_player_to_proto
 from combat_engine      import CombatEngine
 from command_dispatcher import CommandDispatcher

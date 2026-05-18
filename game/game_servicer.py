@@ -14,7 +14,7 @@ from game_state import GameState, MatchPhase, RemotePlayer
 from utils import chebyshev
 from proto_helpers import local_player_to_proto, remote_player_to_proto
 
-
+from lobby.lobby_models import Lobby
 class GameServicer(game_pb2_grpc.GameServiceServicer):
 
     def __init__(self, state: GameState, node):
@@ -292,20 +292,22 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     async def LobbyGossip(self, request, context):
         try:
             incoming = json.loads(request.payload)
-            code = incoming["code"]
+            code = incoming.get("code")
+            if not code: 
+                return game_pb2.Empty()
 
+            lobby = Lobby.from_dict(incoming)
+            
             existing = self.node.lobby.known_lobbies.get(code)
-
             if existing:
-                existing_lobby, existing_ts = existing
-                if existing_lobby.get("version", 0) >= incoming.get("version", 0):
+                existing_lobby, _ = existing
+                if existing_lobby.version >= lobby.version:
                     return game_pb2.Empty()
 
-            self.node.lobby.known_lobbies[code] = (incoming, time.time())
+            self.node.lobby.known_lobbies[code] = (lobby, time.time())
 
-            if incoming.get("source") != self.node.lobby.node_id:
-                incoming["source"] = self.node.lobby.node_id
-                await self.node.lobby._gossip_lobby(incoming)
+            if lobby.source != self.node.lobby.node_id:
+                await self.node.lobby._gossip_lobby(lobby)
 
             return game_pb2.Empty()
 
