@@ -30,6 +30,7 @@ from game.lobby.lobby_manager import LobbyManager
 from proto_helpers      import local_player_to_proto
 from combat_engine      import CombatEngine
 from command_dispatcher import CommandDispatcher
+from lobby.lobby_enums import LobbyStatus
 
 # Segundos de exibição do ecrã de fim antes de reiniciar
 _MATCH_END_PAUSE = 8
@@ -92,9 +93,6 @@ class GameNode:
 
         self.state.local.node_id = self.node_id
 
-        # em start_kademlia, após as duas linhas de atribuição:
-        print(f"[DEBUG] node_id após listen: '{self.node_id}'")
-        print(f"[DEBUG] lobby.node_id após atribuição: '{self.lobby.node_id}'")
 
     async def register_self(self):
         addr = f"{self.host}:{self.grpc_port}"
@@ -169,8 +167,8 @@ class GameNode:
         target peer's Attack RPC. Returns the RPC result or None on error.
         """
         result = None
-        if self.lobby.current_lobby and not getattr(self.lobby, "_is_host", False):
-            host_addr = getattr(self.lobby, "_host_addr", None)
+        if self.lobby.session and not self.lobby.session.is_host:
+            host_addr = self.lobby.session.host_addr
 
             if host_addr:
                 rpc_call = lambda s, r: s.HostAttack(r)
@@ -183,9 +181,13 @@ class GameNode:
             rpc_call = lambda s, r: s.HostAttack(r)
             result = await self._send(local_host_addr, rpc_call, req)
 
+        if result is None and target_peer:
+            addr = target_peer.get("grpc_addr")
+            if addr: 
+                result = await self._send(addr, lambda s, r: s.Attack(r), req)
+
         if result is None:
             self.state.log_event("[!] Ataque falhou.")
-            return None
 
         return result
 
@@ -258,24 +260,17 @@ class GameNode:
         """
         while True:
             await asyncio.sleep(3)
-            if not self.lobby.current_lobby:
+            if not self.lobby.session:
                 continue
-            try:
-                raw = await self.lobby.kad.get(
-                    lobby_meta_key(self.lobby.current_lobby)
-                )
-                if not raw:
-                    continue
-                meta = json.loads(raw)
-                if meta.get("status") == "started":
+            lobby = await self.lobby.repo.get_lobby(self.lobby.session.code)
+            if lobby: 
+                if lobby.status == LobbyStatus.STARTED:
                     if self.state.phase != MatchPhase.ACTIVE:
                         self.state.phase = MatchPhase.ACTIVE
                         self.state.log_event("🎮 O host iniciou o jogo!")
-                elif meta.get("status") == "abandoned":
-                    self.lobby.current_lobby = None
+                elif lobby.status == LobbyStatus.ABANDONED:
+                    self.lobby.session.reset()
                     self.state.log_event("[Lobby] O host saiu — lobby encerrado.")
-            except Exception:
-                pass
 
     async def input_loop(self):
         """Loop de input durante a partida."""
