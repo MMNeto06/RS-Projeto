@@ -416,6 +416,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             ps_target = remote_player_to_proto(target, state.match_id)
 
         # Broadcast target state
+        self.state.log_event("attack resolved by host and will be broadcast")
         tasks = []
         for nid, p in self.node.peers.items(): #broadcast to each peer in lobby
             if nid == self.node.node_id: # skip self

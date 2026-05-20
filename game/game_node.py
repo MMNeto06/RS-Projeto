@@ -27,6 +27,7 @@ from game_servicer import GameServicer
 from renderer      import render_frame
 from input_reader  import InputReader
 from game.lobby.lobby_manager import LobbyManager
+from game.network.router import Router
 from proto_helpers      import local_player_to_proto
 from combat_engine      import CombatEngine
 from command_dispatcher import CommandDispatcher
@@ -36,7 +37,7 @@ from lobby.lobby_enums import LobbyStatus
 _MATCH_END_PAUSE = 8
 
 
-class GameNode:
+class GameNode(Router):
     def __init__(self, username: str, dnd_class: DnDClass,
                  host: str, grpc_port: int, kad_port: int,
                  bootstrap=None, match_id: str = ""):
@@ -71,7 +72,7 @@ class GameNode:
         self._combat = CombatEngine(
             state=self.state,
             peers=self.peers,
-            route_attack_fn=self._route_attack_request,
+            route_attack_fn=self.route_attack,
         )
 
     @property
@@ -162,34 +163,6 @@ class GameNode:
         except Exception:
             return None
 
-    async def _route_attack_request(self, req, target_peer: dict | None = None):
-        """Route an AttackRequest to the host (HostAttack) or fallback to the
-        target peer's Attack RPC. Returns the RPC result or None on error.
-        """
-        result = None
-        if self.lobby and not self.lobby.is_host:
-            host_addr = self.lobby.host_addr
-
-            if host_addr:
-                rpc_call = lambda s, r: s.HostAttack(r)
-                result = await self._send(host_addr, rpc_call, req)
-            else:
-                self.state.log_event("[!] Não foi possível enviar o ataque.")
-                return None
-        else:
-            local_host_addr = f"{self.host}:{self.grpc_port}"
-            rpc_call = lambda s, r: s.HostAttack(r)
-            result = await self._send(local_host_addr, rpc_call, req)
-
-        if result is None and target_peer:
-            addr = target_peer.get("grpc_addr")
-            if addr: 
-                result = await self._send(addr, lambda s, r: s.Attack(r), req)
-
-        if result is None:
-            self.state.log_event("[!] Ataque falhou.")
-
-        return result
 
 
     # ── BROADCAST ─────────────────────────────────────────────────
