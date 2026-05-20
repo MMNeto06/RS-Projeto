@@ -235,7 +235,7 @@ class LobbyManager:
         await self._notify_peers(code, game_pb2.LobbyNotification.PLAYER_LEFT) 
         await self.repo.remove_member(code, self.node_id)
 
-        if self.session.is_host:
+        if self.is_host:
             lobby = await self.repo.get_lobby(code)
             if lobby:
                 lobby.status = LobbyStatus.ABANDONED
@@ -285,7 +285,7 @@ class LobbyManager:
         if not self.session: 
             return None
 
-        if self.session.is_host:
+        if self.is_host:
             return self.node_id
         
         if self.session.lobby_state:
@@ -333,7 +333,7 @@ class LobbyManager:
             print("[Lobby] Não estás em nenhum lobby.")
             return False
  
-        if not self.session.is_host:
+        if not self.is_host:
             print("[Lobby] Só o dono do lobby pode iniciá-lo.")
             return False
  
@@ -389,7 +389,7 @@ class LobbyManager:
         return True, "ok"
     
     async def request_validation(self, attack_req: "game_pb2.AttackRequest") -> bool:
-        if not self.session or not self.session.host_addr:
+        if not self.session or not self.host_addr:
             print("[Lobby] Host desconhecido — ataque bloqueado por segurança.")
             return False
  
@@ -403,7 +403,7 @@ class LobbyManager:
                 target=attack_req.target,
             )
             resp = await self._send(
-                self.session.host_addr,
+                self.host_addr,
                 lambda s, r: s.ValidateAttack(r),
                 val_req,
                 timeout=2.0,
@@ -454,3 +454,18 @@ class LobbyManager:
         
         if lobby:
             self.session.lobby_state = lobby
+    @property
+    def is_host(self) -> bool:
+        return bool(self.session and self.session.is_host)
+    
+    @property
+    def host_addr(self) -> str:
+        return self.session.host_addr if self.session else ""
+
+    def peer_is_host(self, peer) -> bool:
+        if not isinstance(peer, dict):
+            return False
+        owner = self._get_owner_id()
+        if not owner:
+            return False
+        return peer.get("node_id") == owner or peer.get("grpc_addr") == self.host_addr

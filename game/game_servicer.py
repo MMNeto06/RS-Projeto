@@ -232,7 +232,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     # ── VALIDATE ATTACK ───────────────────────────────────────────
 
     async def ValidateAttack(self, request, context):
-        if not self.node.lobby._is_host:
+        if not self.node.lobby.is_host:
             return game_pb2.ValidateAttackResponse(approved=True, reason="not host")
 
         approved, reason = self.node.lobby.validate_attack(
@@ -252,7 +252,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     
     async def HostAttack(self, request, context):
         # REceives attack as host to process
-        if not getattr(self.node, "lobby", None) or not self.node.lobby._is_host:
+        if not getattr(self.node, "lobby", None) or not self.node.lobby.is_host:
             self.state.log_event("[HostAttack] Received HostAttack on non-host — rejected.")
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
         return await self.resolve_attack(request, context)

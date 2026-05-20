@@ -167,8 +167,8 @@ class GameNode:
         target peer's Attack RPC. Returns the RPC result or None on error.
         """
         result = None
-        if self.lobby.session and not self.lobby.session.is_host:
-            host_addr = self.lobby.session.host_addr
+        if self.lobby and not self.lobby.is_host:
+            host_addr = self.lobby.host_addr
 
             if host_addr:
                 rpc_call = lambda s, r: s.HostAttack(r)
