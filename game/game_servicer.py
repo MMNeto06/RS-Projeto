@@ -179,13 +179,13 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             addr = p.get("grpc_addr")
             if not addr:
                 continue
-            tasks.append(self.node._send(addr, lambda s, r: s.StateUpdate(r), ps))
+            tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps))
             seen.add(addr)
 
         for _, o in self.state.others.items():
             addr = getattr(o, "grpc_addr", "")
             if addr and addr not in seen:
-                tasks.append(self.node._send(addr, lambda s, r: s.StateUpdate(r), ps))
+                tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps))
                 seen.add(addr)
 
         if tasks:
@@ -424,7 +424,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             addr = p.get("grpc_addr")
             if not addr:
                 continue
-            tasks.append(self.node._send(addr, lambda s, r: s.StateUpdate(r), ps_target))
+            tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps_target))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         return game_pb2.AttackResult(hit=hit, damage_dealt=dmg, target_hp_remaining=remaining, status_effect="dead" if died else "", target_died=died)

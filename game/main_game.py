@@ -704,7 +704,7 @@ async def main():
     # Usa node.username (pode ter mudado em relação a args.username original)
     leave_req = game_pb2.LeaveNotification(username=node.username)
     tasks = [
-        node._send(p["grpc_addr"], lambda s, r: s.Leave(r), leave_req)
+        node.send_rpc(p["grpc_addr"], 'Leave', leave_req)
         for nid, p in node.peers.items()
         if nid != node.node_id
     ]

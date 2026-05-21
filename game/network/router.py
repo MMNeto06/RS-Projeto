@@ -6,15 +6,13 @@ class Router:
             host_addr = self.lobby.host_addr
 
             if host_addr:
-                rpc_call = lambda s, r: s.HostAttack(r)
-                result = await self._send(host_addr, rpc_call, req)
+                result = await self.send_rpc(host_addr, 'HostAttack', req)
             else:
                 self.state.log_event("[!] Não foi possível enviar o ataque.")
                 return None
         else:
             local_host_addr = f"{self.host}:{self.grpc_port}"
-            rpc_call = lambda s, r: s.HostAttack(r)
-            result = await self._send(local_host_addr, rpc_call, req)
+            result = await self.send_rpc(local_host_addr, 'HostAttack', req)
 
         if result is None:
             self.state.log_event("[!] Ataque falhou.")

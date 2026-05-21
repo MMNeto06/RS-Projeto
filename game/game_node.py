@@ -28,6 +28,7 @@ from renderer      import render_frame
 from input_reader  import InputReader
 from game.lobby.lobby_manager import LobbyManager
 from game.network.router import Router
+from game.network import kademlia_handler
 from proto_helpers      import local_player_to_proto
 from combat_engine      import CombatEngine
 from command_dispatcher import CommandDispatcher
@@ -63,7 +64,7 @@ class GameNode(Router):
             node_id="",
             username=username,
             peers=self.peers,
-            send_fn=self._send,
+            send_fn=self.send_rpc,
             host=self.host,
             kad_port=self.kad_port,
         )
@@ -82,65 +83,30 @@ class GameNode(Router):
     # ── KADEMLIA ──────────────────────────────────────────────────
 
     async def start_kademlia(self):
-        await self.kad.listen(self.kad_port)
-
-        if self.bootstrap:
-            print(f"[DHT] A ligar ao bootstrap {self.bootstrap}…")
-            await self.kad.bootstrap([self.bootstrap])
-            await asyncio.sleep(1)
-            print("[DHT] Ligado!")
-        else:
-            print("[DHT] Primeiro node (bootstrap).")
-
+        await kademlia_handler.init_kad(self.kad, self.kad_port, bootstrap=self.bootstrap)
         self.state.local.node_id = self.node_id
 
 
     async def register_self(self):
-        addr = f"{self.host}:{self.grpc_port}"
-        await self.kad.set(addr_key(self.node_id), addr)
-        await self.kad.set(username_key(self.username), self.node_id)
-        self.peers[self.node_id] = {
-            "node_id":    self.node_id, 
-            "username":   self.username,
-            "grpc_addr":  addr,
-            "last_seen":  time.time(),
-            "class_name": self.state.local.dnd_class.name,
-        }
+        await kademlia_handler.register_self(
+            self.kad,
+            self.node_id,
+            self.host,
+            self.grpc_port,
+            self.username,
+            self.peers,
+            self.state.local.dnd_class.name,
+        )
 
     async def discover_peers(self):
-        await self.kad.get("game:discover")
-        target = kad_node.Node(digest("game:closest"))
-        neighbors = self.kad.protocol.router.find_neighbors(target)
-        for n in neighbors:
-            if (n.ip, n.port) == (self.host, self.kad_port):
-                continue
-            nid = n.id.hex()
+        candidates = await kademlia_handler.find_neighbor_addrs(self.kad, self.host, self.kad_port)
+        for nid, addr in candidates:
             if nid in self.peers:
                 continue
-            addr = await self.kad.get(addr_key(nid))
-            if addr:
-                await self._handshake(addr, remote_node_id=nid)
+            await self._handshake(addr, remote_node_id=nid)
 
     async def _handshake(self, addr: str, remote_node_id: str = ""):
-        host, port = addr.split(":")
-        try:
-            async with grpc.aio.insecure_channel(f"{host}:{port}") as ch:
-                stub = game_pb2_grpc.GameServiceStub(ch)
-                resp = await asyncio.wait_for(
-                    stub.Ping(game_pb2.PingRequest(from_user=self.node_id)),
-                    timeout=2.0,
-                )
-                key = remote_node_id if remote_node_id else resp.username
-                if key not in self.peers:
-                    self.peers[key] = {
-                        "node_id":    remote_node_id,
-                        "username":   resp.username,
-                        "grpc_addr":  addr,
-                        "last_seen":  time.time(),
-                        "class_name": "",
-                    }
-        except Exception:
-            pass
+        await kademlia_handler.handshake(addr, self.node_id, self.peers, remote_node_id)
 
     # ── gRPC ──────────────────────────────────────────────────────
 
@@ -163,6 +129,16 @@ class GameNode(Router):
         except Exception:
             return None
 
+    async def send_rpc(self, addr: str, rpc, request, timeout: float = 3.0):
+        #so the lambda isnt repeated everywhere
+        if isinstance(rpc, str):
+            rpc_name = rpc
+            rpc_fn = lambda s, r: getattr(s, rpc_name)(r)
+        else:
+            rpc_fn = rpc
+
+        return await self._send(addr, rpc_fn, request, timeout=timeout)
+
 
 
     # ── BROADCAST ─────────────────────────────────────────────────
@@ -172,7 +148,7 @@ class GameNode(Router):
         lp.tick_effects()   # limpa efeitos expirados antes de enviar
         pb = local_player_to_proto(lp, self.state.match_id)
         tasks = [
-            self._send(p["grpc_addr"], lambda s, r: s.StateUpdate(r), pb)
+            self.send_rpc(p["grpc_addr"], 'StateUpdate', pb)
             for nid, p in self.peers.items()
             if nid != self.node_id
         ]
@@ -187,7 +163,7 @@ class GameNode(Router):
             port=self.grpc_port,
         )
         tasks = [
-            self._send(p["grpc_addr"], lambda s, r: s.Join(r), req)
+            self.send_rpc(p["grpc_addr"], 'Join', req)
             for nid, p in self.peers.items()
             if nid != self.node_id
         ]
@@ -291,7 +267,7 @@ class GameNode(Router):
             event_author=self.username,
         )
         tasks = [
-            self._send(p["grpc_addr"], lambda s, r: s.BroadcastEvent(r), event)
+            self.send_rpc(p["grpc_addr"], 'BroadcastEvent', event)
             for nid, p in self.peers.items()
             if nid != self.node_id
         ]
@@ -357,7 +333,7 @@ class GameNode(Router):
 
         leave_req = game_pb2.LeaveNotification(username=self.username)
         tasks = [
-            self._send(p["grpc_addr"], lambda s, r: s.Leave(r), leave_req)
+            self.send_rpc(p["grpc_addr"], 'Leave', leave_req)
             for nid, p in self.peers.items()
             if nid != self.node_id
         ]

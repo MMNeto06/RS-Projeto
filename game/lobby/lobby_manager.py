@@ -18,6 +18,7 @@ class LobbyManager:
         self.username = username
         self.peers    = peers
         self._send    = send_fn 
+        self.send_rpc = send_fn
         self.host = host
         self.kad_port = kad_port    
         self.session: LobbySession | None = None
@@ -55,7 +56,7 @@ class LobbyManager:
                 continue
 
             tasks.append(
-                self._send(p["grpc_addr"], lambda s, r: s.LobbyGossip(r), game_pb2.LobbyGossipMessage(payload=msg))
+                self.send_rpc(p["grpc_addr"], 'LobbyGossip', game_pb2.LobbyGossipMessage(payload=msg))
             )
 
         if tasks:
@@ -216,7 +217,7 @@ class LobbyManager:
         notification.username   = self.username
         
         tasks = [
-            self._send(p["grpc_addr"], lambda s, r: s.LobbyNotify(r), notification)
+            self.send_rpc(p["grpc_addr"], 'LobbyNotify', notification)
             for p in self.peers.values()
             if p.get("grpc_addr")
         ]
@@ -402,9 +403,9 @@ class LobbyManager:
                 is_spell=attack_req.is_spell,
                 target=attack_req.target,
             )
-            resp = await self._send(
+            resp = await self.send_rpc(
                 self.host_addr,
-                lambda s, r: s.ValidateAttack(r),
+                'ValidateAttack',
                 val_req,
                 timeout=2.0,
             )
