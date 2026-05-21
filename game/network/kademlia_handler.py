@@ -2,6 +2,7 @@
 import asyncio
 from typing import Iterable, List, Tuple, Dict, Callable, Optional
 
+
 from kademlia.utils import digest
 import kademlia.node as kad_node
 
@@ -11,6 +12,8 @@ import time
 import grpc
 import game_pb2
 import game_pb2_grpc
+import os
+
 
 
 async def init_kad(kad, kad_port: int, bootstrap: Optional[str] = None) -> None:
@@ -29,9 +32,9 @@ async def init_kad(kad, kad_port: int, bootstrap: Optional[str] = None) -> None:
 
 async def find_neighbor_addrs(kad, host: str, kad_port: int, ksize: int = 20) -> List[Tuple[str, str]]:
     #returns a list of (node_id, grpc_addr) tuples, for each node found in the dht;
-    await kad.get("game:discover")
-    target = kad_node.Node(digest("game:closest"))
-    neighbors = kad.protocol.router.find_neighbors(target) #get nodes closest to tager
+    await kad.get("game:discover") #makes sure the routing table isnt stale
+    target = kad_node.Node(digest(os.urandom(16))) #random target for more diverse results
+    neighbors = kad.protocol.router.find_neighbors(target)[:ksize] #get nodes closest to target
 
     results: List[Tuple[str, str]] = []
     for n in neighbors:

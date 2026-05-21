@@ -192,7 +192,7 @@ class GameNode(Router):
                 try:
                     await asyncio.wait_for(
                         self._reader.input_event.wait(),
-                        timeout=1.0,
+                        timeout=1/30,
                     )
                     self._reader.input_event.clear()
                 except asyncio.TimeoutError:
