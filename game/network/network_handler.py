@@ -41,7 +41,7 @@ async def find_neighbor_addrs(kad, host: str, kad_port: int, ksize: int = 20) ->
         if (n.ip, n.port) == (host, kad_port): #skip self
             continue
         nid = n.id.hex()
-        addr = await kad.get(addr_key(nid)) #gets the grpc address from the DHT
+        addr = await kad.get(addr_key(nid)) #gets the address from the DHT
         if addr:
             results.append((nid, addr))
     return results
@@ -72,24 +72,22 @@ async def register_self(kad, node_id: str, host: str, grpc_port: int, username: 
     }
 
 
-async def handshake(addr: str, node_id_prop: str, peers: dict, remote_node_id: str = "") -> None:
-    #do a ping handshake and populate peers 
-    host, port = addr.split(":")  #get host and port
+#Actually this is grpc , should change it somewhere else
+async def handshake(addr: str, node_id_prop: str, peers: dict, remote_node_id: str = "", stub: game_pb2_grpc.GameServiceStub = None) -> None:
     try:
-        async with grpc.aio.insecure_channel(f"{host}:{port}") as ch:
-            stub = game_pb2_grpc.GameServiceStub(ch)
-            resp = await asyncio.wait_for(
-                stub.Ping(game_pb2.PingRequest(from_user=node_id_prop)),
-                timeout=2.0,
-            )
-            key = remote_node_id if remote_node_id else resp.username
-            if key not in peers:
-                peers[key] = {
-                    "node_id":    remote_node_id,
-                    "username":   resp.username,
-                    "grpc_addr":  addr,
-                    "last_seen":  time.time(),
-                    "class_name": "",
-                }
+        #do a ping handshake and populate peers 
+        resp = await asyncio.wait_for(
+            stub.Ping(game_pb2.PingRequest(from_user=node_id_prop)),
+            timeout=2.0,
+        )
+        key = remote_node_id
+        if key not in peers:
+            peers[key] = {
+                "node_id":    remote_node_id,
+                "username":   resp.username,
+                "grpc_addr":  addr,
+                "last_seen":  time.time(),
+                "class_name": "",
+            }
     except Exception:
         pass

@@ -27,8 +27,8 @@ from game_servicer import GameServicer
 from renderer      import render_frame
 from input_reader  import InputReader
 from game.lobby.lobby_manager import LobbyManager
-from game.network.router import Router
-from game.network import kademlia_handler
+from game.network.host_router import Router
+from game.network import network_handler
 from proto_helpers      import local_player_to_proto
 from combat_engine      import CombatEngine
 from command_dispatcher import CommandDispatcher
@@ -75,6 +75,8 @@ class GameNode(Router):
             peers=self.peers,
             route_attack_fn=self.route_attack,
         )
+        self._channels: dict[str, grpc.aio.Channel] = {}
+        self._stubs: dict[str, game_pb2_grpc.GameServiceStub] = {}
 
     @property
     def node_id(self) -> str:
@@ -83,12 +85,12 @@ class GameNode(Router):
     # ── KADEMLIA ──────────────────────────────────────────────────
 
     async def start_kademlia(self):
-        await kademlia_handler.init_kad(self.kad, self.kad_port, bootstrap=self.bootstrap)
+        await network_handler.init_kad(self.kad, self.kad_port, bootstrap=self.bootstrap)
         self.state.local.node_id = self.node_id
 
 
     async def register_self(self):
-        await kademlia_handler.register_self(
+        await network_handler.register_self(
             self.kad,
             self.node_id,
             self.host,
@@ -99,14 +101,15 @@ class GameNode(Router):
         )
 
     async def discover_peers(self):
-        candidates = await kademlia_handler.find_neighbor_addrs(self.kad, self.host, self.kad_port)
+        candidates = await network_handler.find_neighbor_addrs(self.kad, self.host, self.kad_port)
         for nid, addr in candidates:
             if nid in self.peers:
                 continue
             await self._handshake(addr, remote_node_id=nid)
 
     async def _handshake(self, addr: str, remote_node_id: str = ""):
-        await kademlia_handler.handshake(addr, self.node_id, self.peers, remote_node_id)
+        stub = await self.get_or_create_grpc_stub(addr)
+        await network_handler.handshake(addr, self.node_id, self.peers, remote_node_id, stub)
 
     # ── gRPC ──────────────────────────────────────────────────────
 
@@ -121,14 +124,22 @@ class GameNode(Router):
         print(f"[gRPC] Servidor do jogo na porta {self.grpc_port}")
 
     async def _send(self, addr: str, rpc_fn, request, timeout: float = 3.0):
-        host, port = addr.split(":")
         try:
-            async with grpc.aio.insecure_channel(f"{host}:{port}") as ch:
-                stub = game_pb2_grpc.GameServiceStub(ch)
-                return await asyncio.wait_for(rpc_fn(stub, request), timeout=timeout)
+            stub = await self.get_or_create_grpc_stub(addr)
+            if not stub:
+                return None
+            return await asyncio.wait_for(rpc_fn(stub, request), timeout=timeout)
         except Exception:
+            # on error, drop cached channel/stub so future attempts recreate
+            ch = self._channels.pop(addr, None)
+            if ch:
+                try:
+                    ch.close()
+                except Exception:
+                    pass
+            self._stubs.pop(addr, None)
             return None
-
+        
     async def send_rpc(self, addr: str, rpc, request, timeout: float = 3.0):
         #so the lambda isnt repeated everywhere
         if isinstance(rpc, str):
@@ -138,6 +149,33 @@ class GameNode(Router):
             rpc_fn = rpc
 
         return await self._send(addr, rpc_fn, request, timeout=timeout)
+    
+    
+    async def get_or_create_grpc_channel(self, addr: str = "") -> grpc.aio.Channel:
+        if not addr: return None
+            
+
+        channel = self._channels.get(addr)
+        if channel: return channel
+            
+
+        channel = grpc.aio.insecure_channel(addr)
+        self._channels[addr] = channel
+        return channel
+
+    async def get_or_create_grpc_stub(self, addr: str = "") -> game_pb2_grpc.GameServiceStub:
+        if not addr: return None
+
+        stub = self._stubs.get(addr)
+        if stub: return stub
+            
+        ch = await self.get_or_create_grpc_channel(addr)
+        if not ch: return None
+            
+        stub = game_pb2_grpc.GameServiceStub(ch)
+        self._stubs[addr] = stub
+        return stub
+        
 
 
 
@@ -319,6 +357,8 @@ class GameNode(Router):
             except Exception:
                 pass
             await asyncio.sleep(0.5)
+            
+            
 
     # ── ARRANQUE ──────────────────────────────────────────────────
 
@@ -342,4 +382,13 @@ class GameNode(Router):
 
         if self.grpc_server:
             await self.grpc_server.stop(grace=2)
+        # close pooled channels
+        for ch in list(self._channels.values()):
+            try:
+                ch.close()
+            except Exception:
+                pass
+        self._channels.clear()
+        self._stubs.clear()
+
         print("\n[Jogo] Saíste. Até à próxima!")
