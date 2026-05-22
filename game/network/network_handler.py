@@ -58,12 +58,11 @@ async def probe_addrs(kad, node_ids: Iterable[str]) -> Dict[str, str]:
 
 
 async def register_self(kad, node_id: str, host: str, grpc_port: int, username: str, peers: dict, class_name: str) -> None:
-    #registers the local node in the DHT and populates the peers map.
-
-    addr = f"{host}:{grpc_port}" #get address
-    await kad.set(addr_key(node_id), addr) #set the address in the DHT
-    await kad.set(username_key(username), node_id) #set username in the DHT
-    peers[node_id] = { #register own data in the peers list
+    # registers the local node in the DHT and populates the peers map.
+    addr = f"{host}:{grpc_port}"
+    await kad.set(addr_key(node_id), addr)
+    await kad.set(username_key(username), node_id)
+    peers[node_id] = {
         "node_id":   node_id,
         "username":  username,
         "grpc_addr": addr,

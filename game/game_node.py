@@ -77,6 +77,7 @@ class GameNode(Router):
         )
         self._channels: dict[str, grpc.aio.Channel] = {}
         self._stubs: dict[str, game_pb2_grpc.GameServiceStub] = {}
+        self._last_register = 0.0
 
     @property
     def node_id(self) -> str:
@@ -89,7 +90,10 @@ class GameNode(Router):
         self.state.local.node_id = self.node_id
 
 
-    async def register_self(self):
+    async def register_self(self, force: bool = False, min_interval: float = 10.0):
+        now = time.time()
+        if not force and (now - self._last_register) < min_interval:
+            return
         await network_handler.register_self(
             self.kad,
             self.node_id,
@@ -99,6 +103,8 @@ class GameNode(Router):
             self.peers,
             self.state.local.dnd_class.name,
         )
+        self._last_register = now
+        
 
     async def discover_peers(self):
         candidates = await network_handler.find_neighbor_addrs(self.kad, self.host, self.kad_port)
@@ -367,7 +373,7 @@ class GameNode(Router):
 
         await self.start_kademlia()
         await self.start_grpc_server()
-        await self.register_self()
+        await self.register_self(force=True)
         asyncio.create_task(self._refresh_loop())
         await self.input_loop()
 
@@ -385,7 +391,9 @@ class GameNode(Router):
         # close pooled channels
         for ch in list(self._channels.values()):
             try:
-                ch.close()
+                res = ch.close()
+                if asyncio.iscoroutine(res):
+                    await res
             except Exception:
                 pass
         self._channels.clear()

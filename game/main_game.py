@@ -217,13 +217,17 @@ async def _username_is_free(node: "GameNode", name: str) -> bool:
         return True  # node_id sem endereço → entrada obsoleta
 
     try:
-        async with grpc.aio.insecure_channel(addr) as ch:
-            stub = game_pb2_grpc.GameServiceStub(ch)
+        try:
+            stub = await node.get_or_create_grpc_stub(addr)
+            if stub is None:
+                return True
             await asyncio.wait_for(
                 stub.Ping(game_pb2.PingRequest(from_user=node.username)),
                 timeout=2.0,
             )
-        return False  # respondeu → username em uso
+            return False  # respondeu → username em uso
+        except Exception:
+            return True
     except Exception:
         return True   # não respondeu → entrada obsoleta
 
@@ -383,7 +387,7 @@ async def run_menu(
                 username = new_name
                 node.username = new_name
                 node.state.local.username = new_name
-                await node.register_self()
+                await node.register_self(force=True)
                 _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
 
             elif cmd == "class":
@@ -393,6 +397,8 @@ async def run_menu(
                 c = get_class(parts[1].lower())
                 if c:
                     current_class = c
+                    node.state.local.dnd_class = c
+                    await node.register_self(force=True)
                     _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
                 else:
                     print(f"  {_RE}[!]{_R} Classe desconhecida: '{parts[1]}'")
@@ -691,6 +697,7 @@ async def main():
 
     node.state.local.dnd_class = chosen_class
     node.state.local.hp        = chosen_class.hp_base
+    await node.register_self(force=True)
 
     if node.lobby.session:
         from game_state import MatchPhase
