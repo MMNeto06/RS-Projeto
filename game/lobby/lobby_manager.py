@@ -51,7 +51,8 @@ class LobbyManager:
         msg = json.dumps(lobby.to_dict())
 
         tasks = []
-        for p in sample:
+        snapshot = list(sample) #to avoid race conditions
+        for p in snapshot:
             if not p.get("grpc_addr"):
                 continue
 

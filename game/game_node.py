@@ -140,7 +140,9 @@ class GameNode(Router):
             ch = self._channels.pop(addr, None)
             if ch:
                 try:
-                    ch.close()
+                    res = ch.close()
+                    if asyncio.iscoroutine(res):
+                        await res
                 except Exception:
                     pass
             self._stubs.pop(addr, None)
@@ -191,9 +193,10 @@ class GameNode(Router):
         lp = self.state.local
         lp.tick_effects()   # limpa efeitos expirados antes de enviar
         pb = local_player_to_proto(lp, self.state.match_id)
+        peers_snapshot = list(self.peers.items()) #to avoid race conditions
         tasks = [
             self.send_rpc(p["grpc_addr"], 'StateUpdate', pb)
-            for nid, p in self.peers.items()
+            for nid, p in peers_snapshot
             if nid != self.node_id
         ]
         if tasks:
@@ -206,9 +209,10 @@ class GameNode(Router):
             grpc_address=self.host,
             port=self.grpc_port,
         )
+        peers_snapshot = list(self.peers.items())
         tasks = [
             self.send_rpc(p["grpc_addr"], 'Join', req)
-            for nid, p in self.peers.items()
+            for nid, p in peers_snapshot
             if nid != self.node_id
         ]
         if tasks:
@@ -310,9 +314,10 @@ class GameNode(Router):
             match_id=self.state.match_id,
             event_author=self.username,
         )
+        peers_snapshot = list(self.peers.items())
         tasks = [
             self.send_rpc(p["grpc_addr"], 'BroadcastEvent', event)
-            for nid, p in self.peers.items()
+            for nid, p in peers_snapshot
             if nid != self.node_id
         ]
         if tasks:
@@ -378,9 +383,10 @@ class GameNode(Router):
         await self.input_loop()
 
         leave_req = game_pb2.LeaveNotification(username=self.username)
+        peers_snapshot = list(self.peers.items())
         tasks = [
             self.send_rpc(p["grpc_addr"], 'Leave', leave_req)
-            for nid, p in self.peers.items()
+            for nid, p in peers_snapshot
             if nid != self.node_id
         ]
         if tasks:
