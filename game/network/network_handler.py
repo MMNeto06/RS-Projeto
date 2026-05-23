@@ -9,7 +9,6 @@ import kademlia.node as kad_node
 from dht_keys import addr_key
 from dht_keys import username_key
 import time
-import grpc
 import game_pb2
 import game_pb2_grpc
 import os
@@ -36,22 +35,40 @@ async def find_neighbor_addrs(kad, host: str, kad_port: int, ksize: int = 20) ->
     target = kad_node.Node(digest(os.urandom(16))) #random target for more diverse results
     neighbors = kad.protocol.router.find_neighbors(target)[:ksize] #get nodes closest to target
 
-    results: List[Tuple[str, str]] = []
+    candidate_ids: List[str] = []
     for n in neighbors:
         if (n.ip, n.port) == (host, kad_port): #skip self
             continue
         nid = n.id.hex()
-        addr = await kad.get(addr_key(nid)) #gets the address from the DHT
+        if nid in candidate_ids: #dont add if it's already in the list
+            continue
+        candidate_ids.append(nid)
+
+    addr_map = await probe_addrs(kad, candidate_ids, 10, 0.5)
+
+    results: List[Tuple[str, str]] = [] #need to convert because the method gives a dict, and I can't change it because of dependencies
+    for nid in candidate_ids:
+        addr = addr_map.get(nid)
         if addr:
             results.append((nid, addr))
     return results
 
 
-async def probe_addrs(kad, node_ids: Iterable[str]) -> Dict[str, str]:
-    #look up all node ids given and return their grpc addresses in a dict
-    out: Dict[str, str] = {}
-    for nid in node_ids:
-        addr = await kad.get(addr_key(nid))
+async def probe_addrs(kad, node_ids: Iterable[str], concurrency: int, timeout: float) -> Dict[str, str]:
+    sem = asyncio.Semaphore(concurrency) #im converting to a semaphore so I can have concurrent lookups instead of doing so many blocking iterative ones
+
+    async def get_with_sem(nid: str):
+        async with sem:
+            try:
+                addr = await asyncio.wait_for(kad.get(addr_key(nid)), timeout=timeout)
+                return nid, addr
+            except Exception:
+                return nid, None
+
+    out: Dict[str,str] = {}
+    
+    for result in asyncio.as_completed((get_with_sem(nid) for nid in node_ids)):
+        nid, addr = await result
         if addr:
             out[nid] = addr
     return out
