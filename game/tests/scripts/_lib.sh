@@ -36,7 +36,7 @@ cleanup_all() {
             kill "$pid" 2>/dev/null || true
             local i=0
             while kill -0 "$pid" 2>/dev/null && [ $i -lt 20 ]; do
-                sleep 0.1; ((i++))
+                sleep 0.1; i=$((i + 1))
             done
             kill -9 "$pid" 2>/dev/null || true
         fi
@@ -44,16 +44,28 @@ cleanup_all() {
 
     for fd in "${OPEN_FDS[@]:-}"; do
         # Fechar o FD com segurança; pode já estar fechado se o processo saiu
-        exec {fd}>&- 2>/dev/null || true
+        # `OPEN_FDS` armazena números de descritor (ex: 10). Tentar usar
+        # `exec {fd}>&-` aqui falha porque `{fd}` é tratado como nome de
+        # variável de descritor (não o número). Em vez disso, fechamos o
+        # FD pelo seu número com `eval` — seguro porque validamos que é
+        # composto somente por dígitos.
+        if [[ -n "$fd" && "$fd" =~ ^[0-9]+$ ]]; then
+            eval "exec ${fd}>&- 2>/dev/null" || true
+        fi
     done
 
-    rm -rf "$TMPDIR_TEST"
+    if [ -n "${KEEP_TEST_LOGS:-}" ]; then
+        info "KEEP_TEST_LOGS set — preservando logs em: $TMPDIR_TEST"
+    else
+        rm -rf "$TMPDIR_TEST"
+    fi
 
     if [ $exit_code -eq 0 ]; then
         ok "Limpeza concluída."
     else
         warn "Script terminou com código $exit_code. Limpeza concluída."
     fi
+    exit "$exit_code"
 }
 
 trap cleanup_all EXIT INT TERM
@@ -292,4 +304,50 @@ show_log() {
     echo -e "\n${YELLOW}── Log de ${uname} ──${RESET}"
     sed 's/\x1b\[[0-9;]*[mKHJ]//g' "$logfile"
     echo -e "${YELLOW}── fim ──${RESET}\n"
+}
+
+# ── Port allocation helpers (ephemeral ports) ─────────────────────
+# Use the project's virtualenv python if available, otherwise system python3.
+get_python() {
+    if [ -x "${GAME_ROOT}/.venv/bin/python3" ]; then
+        printf '%s' "${GAME_ROOT}/.venv/bin/python3"
+    else
+        printf '%s' "python3"
+    fi
+}
+
+# Returns an available TCP port number
+get_free_tcp_port() {
+    local py
+    py=$(get_python)
+    "$py" - <<'PY'
+import socket
+s=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(('', 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+# Returns an available UDP port number
+get_free_udp_port() {
+    local py
+    py=$(get_python)
+    "$py" - <<'PY'
+import socket
+s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(('', 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+# Allocate a pair of grpc/udp ports for two players and export variables
+allocate_pair_ports() {
+    # Usage: allocate_pair_ports ALICE_PREFIX BOB_PREFIX
+    local a="$1" b="$2"
+    eval "${a}_GRPC=$(get_free_tcp_port)"
+    eval "${a}_KAD=$(get_free_udp_port)"
+    eval "${b}_GRPC=$(get_free_tcp_port)"
+    eval "${b}_KAD=$(get_free_udp_port)"
 }

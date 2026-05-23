@@ -81,10 +81,14 @@ run_test() {
     local t0
     t0=$(date +%s)
 
-    if "$@"; then
+    # Run the test and capture its exit code so we can report why it failed.
+    "$@"
+    local status=$?
+    if [ $status -eq 0 ]; then
         RESULTS[$name]="PASS"
     else
         RESULTS[$name]="FAIL"
+        err "Test '${label}' exited with status: ${status}"
     fi
 
     DURATIONS[$name]=$(( $(date +%s) - t0 ))
@@ -115,7 +119,7 @@ hr
 
 # 1. Testes unitários
 run_test "unit" "Testes Unitários (offline)" \
-    bash "$SCRIPT_DIR/run_unit_tests.sh"
+    bash "$SCRIPT_DIR/run_unit_test.sh"
 
 # 2. Isolamento de lobby
 run_test "cross" "Isolamento de Lobby (cenário ${CROSS_SCENARIO^^})" \

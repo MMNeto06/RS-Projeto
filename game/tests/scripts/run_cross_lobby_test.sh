@@ -33,11 +33,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Portas fixas ──────────────────────────────────────────────────
-ALICE_GRPC=50051;   ALICE_KAD=50052
-BOB_GRPC=50053;     BOB_KAD=50054
-CHARLIE_GRPC=50061; CHARLIE_KAD=50062
-DAVE_GRPC=50063;    DAVE_KAD=50064
+# ── Portas (ephemeral) ──────────────────────────────────────────
+# Allocate ephemeral ports for both lobbies to avoid collisions
+allocate_pair_ports "ALICE" "BOB"
+allocate_pair_ports "CHARLIE" "DAVE"
+
+# Now ALICE_GRPC, ALICE_KAD, BOB_GRPC, BOB_KAD, CHARLIE_GRPC, CHARLIE_KAD,
+# and DAVE_GRPC, DAVE_KAD are set
 
 # ─────────────────────────────────────────────────────────────────
 # CENÁRIO A — 1 lobby, atacante desconhecido ("charlie")
@@ -176,3 +178,4 @@ case "$SCENARIO" in
 esac
 
 ok "Teste de isolamento de lobby concluído."
+exit 0

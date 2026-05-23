@@ -30,9 +30,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Portas fixas ──────────────────────────────────────────────────
-ALICE_GRPC=50051; ALICE_KAD=50052
-BOT_GRPC=50053;   BOT_KAD=50054
+# ── Portas (ephemeral) ───────────────────────────────────────────
+# Allocate ephemeral ports to avoid collisions between runs
+allocate_pair_ports "ALICE" "BOT"
+
+# Now ALICE_GRPC, ALICE_KAD, BOT_GRPC, BOT_KAD are set
 
 # ── Setup ─────────────────────────────────────────────────────────
 hr
@@ -60,3 +62,4 @@ uv run python tests/load_test.py \
     --rounds  "$ROUNDS"
 
 ok "Teste de carga concluído."
+exit 0

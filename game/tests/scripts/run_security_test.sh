@@ -23,9 +23,11 @@
 
 source "$(dirname "$0")/_lib.sh"
 
-# ── Portas fixas ──────────────────────────────────────────────────
-ALICE_GRPC=50051; ALICE_KAD=50052
-HACKER_GRPC=50053; HACKER_KAD=50054
+# ── Portas (ephemeral) ───────────────────────────────────────────
+# Allocate ephemeral ports to avoid collisions between runs
+allocate_pair_ports "ALICE" "HACKER"
+
+# Now ALICE_GRPC, ALICE_KAD, HACKER_GRPC, HACKER_KAD are set
 
 # ── Setup ─────────────────────────────────────────────────────────
 hr
@@ -50,3 +52,4 @@ uv run python tests/security_test.py "127.0.0.1:${ALICE_GRPC}"
 
 ok "Testes de segurança concluídos."
 info "Revê os resultados acima: procura hit=True ou applied=True onde não deveria."
+exit 0

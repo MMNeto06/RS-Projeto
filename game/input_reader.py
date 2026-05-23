@@ -50,6 +50,11 @@ class InputReader:
     def start(self):
         if not _UNIX or self._started:
             return
+        try:
+            if not os.isatty(self._fd):
+                return
+        except Exception:
+            return
         self.input_event = asyncio.Event()
         self._old_settings = termios.tcgetattr(self._fd)
         tty.setcbreak(self._fd)
