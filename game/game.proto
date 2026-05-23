@@ -13,6 +13,7 @@ service GameService {
   rpc LobbyNotify    (LobbyNotification)      returns (LobbyNotificationAck);
   rpc LobbyGossip(LobbyGossipMessage) returns (Empty);
   rpc HostAttack (AttackRequest) returns (AttackResult);
+  rpc HostMove (MoveRequest) returns (MoveResult);
 }
 
 message Empty {}
@@ -142,4 +143,13 @@ message LobbyNotificationAck {
 
 message LobbyGossipMessage {
   string payload = 1;
+}
+
+message MoveRequest {
+  string username = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+message MoveResult {
+  bool applied = 1;
 }

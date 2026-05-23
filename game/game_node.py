@@ -223,9 +223,10 @@ class GameNode(Router):
 
     async def move(self, dx: int, dy: int):
         lp    = self.state.local
-        lp.x  = max(0, min(MAP_W - 1, lp.x + dx))
-        lp.y  = max(0, min(MAP_H - 1, lp.y + dy))
-        await self.broadcast_state()
+        new_x  = max(0, min(MAP_W - 1, lp.x + dx))
+        new_y  = max(0, min(MAP_H - 1, lp.y + dy))
+        await self.route_move(game_pb2.MoveRequest(username = self.username,x = new_x,y = new_y))
+
 
     # ── RENDER LOOP ───────────────────────────────────────────────
 

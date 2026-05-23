@@ -89,6 +89,11 @@ class GameServiceStub(object):
                 request_serializer=game__pb2.AttackRequest.SerializeToString,
                 response_deserializer=game__pb2.AttackResult.FromString,
                 _registered_method=True)
+        self.HostMove = channel.unary_unary(
+                '/game.GameService/HostMove',
+                request_serializer=game__pb2.MoveRequest.SerializeToString,
+                response_deserializer=game__pb2.MoveResult.FromString,
+                _registered_method=True)
 
 
 class GameServiceServicer(object):
@@ -160,6 +165,12 @@ class GameServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def HostMove(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_GameServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -217,6 +228,11 @@ def add_GameServiceServicer_to_server(servicer, server):
                     servicer.HostAttack,
                     request_deserializer=game__pb2.AttackRequest.FromString,
                     response_serializer=game__pb2.AttackResult.SerializeToString,
+            ),
+            'HostMove': grpc.unary_unary_rpc_method_handler(
+                    servicer.HostMove,
+                    request_deserializer=game__pb2.MoveRequest.FromString,
+                    response_serializer=game__pb2.MoveResult.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -516,6 +532,33 @@ class GameService(object):
             '/game.GameService/HostAttack',
             game__pb2.AttackRequest.SerializeToString,
             game__pb2.AttackResult.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def HostMove(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/game.GameService/HostMove',
+            game__pb2.MoveRequest.SerializeToString,
+            game__pb2.MoveResult.FromString,
             options,
             channel_credentials,
             insecure,

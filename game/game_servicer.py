@@ -13,6 +13,8 @@ from game_pb2 import GameEvent
 from game_state import GameState, MatchPhase, RemotePlayer
 from utils import chebyshev
 from proto_helpers import local_player_to_proto, remote_player_to_proto
+import game_state 
+
 
 from lobby.lobby_models import Lobby
 class GameServicer(game_pb2_grpc.GameServiceServicer):
@@ -257,6 +259,14 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
         return await self.resolve_attack(request, context)
     
+    async def HostMove(self, request, context):
+        # Receives move as host to process
+        if not getattr(self.node, "lobby", None) or not self.node.lobby.is_host:
+            self.state.log_event("[HostMove] Received HostMove on non-host — rejected.")
+            return game_pb2.MoveResult(applied=False)
+        return await self.resolve_move(request, context)
+
+    
     # ── LOBBY NOTIFY ──────────────────────────────────────────────
 
     async def LobbyNotify(self, request, context):
@@ -328,6 +338,10 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
         if target is None:
             self.state.log_event(f"[Host] Ataque a desconhecido '{request.target}' — rejeitado.")
+            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
+
+
+        if not attacker.alive or not target.alive:
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
 
         # Validate the attack
@@ -418,7 +432,8 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         # Broadcast target state
         self.state.log_event("attack resolved by host and will be broadcast")
         tasks = []
-        for nid, p in self.node.peers.items(): #broadcast to each peer in lobby
+        snapshot = self.node.peers.items()
+        for nid, p in snapshot: #broadcast to each peer in lobby
             if nid == self.node.node_id: # skip self
                 continue
             addr = p.get("grpc_addr")
@@ -428,3 +443,54 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         return game_pb2.AttackResult(hit=hit, damage_dealt=dmg, target_hp_remaining=remaining, status_effect="dead" if died else "", target_died=died)
+    
+    
+    async def resolve_move(self, request, context):
+        state = self.state
+        node = self.node
+
+        username = getattr(request, 'username', None)
+        user, userIsHost = self._lookup_player(username)
+
+        if user is None:
+            self.state.log_event(f"[Host] Move de desconhecido '{username}' — rejeitado.")
+            return game_pb2.MoveResult(applied=False)
+
+        if userIsHost:
+            ux, uy = state.local.x, state.local.y
+        else:
+            ux = getattr(user, 'x', None)
+            uy = getattr(user, 'y', None)
+        if ux is None or uy is None:
+            return game_pb2.MoveResult(applied=False)
+
+        new_x = int(getattr(request, 'x', -1)) #-1 if it cant get the coord
+        new_y = int(getattr(request, 'y', -1))
+
+        # Bounds check
+        if not (0 <= new_x < game_state.MAP_W and 0 <= new_y < game_state.MAP_H):
+            return game_pb2.MoveResult(applied=False)
+
+        # Can't move if dead
+        if not user.alive:
+            return game_pb2.MoveResult(applied=False)
+
+        if userIsHost: #apply locally
+            state.local.x, state.local.y = new_x, new_y
+            ps = local_player_to_proto(state.local, state.match_id)
+        else:
+            user.x, user.y = new_x, new_y
+            ps = remote_player_to_proto(user, state.match_id)
+
+        tasks = []
+        snapshot = self.node.peers.items()
+        for nid, p in snapshot: #broadcast to each peer in lobby
+            if nid == self.node.node_id: # skip self
+                continue
+            addr = p.get("grpc_addr")
+            if not addr:
+                continue
+            tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return game_pb2.MoveResult(applied=True)
