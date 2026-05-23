@@ -9,4 +9,5 @@ dependencies = [
     "grpcio>=1.80.0",
     "grpcio-tools>=1.80.0",
     "kademlia>=2.2.3",
+    "pytest>=9.0.3",
 ]
