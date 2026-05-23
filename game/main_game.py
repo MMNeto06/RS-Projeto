@@ -450,7 +450,7 @@ async def run_menu(
                         print("  [!] maxJogadores deve ser um número inteiro.")
                         continue
                     await node.lobby.create(parts[2], max_p, my_addr)
-                    time.sleep(1.5)
+                    await asyncio.sleep(1.5)
                     _render_menu(username, current_class, node.lobby.session.code if node.lobby.session else None)
 
                 elif sub == "join":

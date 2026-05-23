@@ -24,6 +24,10 @@ class LobbyManager:
         self.session: LobbySession | None = None
         self.known_lobbies: dict[str, tuple[Lobby, float]] = {}
         self.repo = LobbyRepository(kad)
+        # Cache local do membro deste nó — evita depender de um lookup DHT
+        # que pode falhar quando um novo peer entra na rede e passa a ser o
+        # nó mais próximo para a chave desta entrada mas ainda não tem os dados.
+        self._local_member: "LobbyMember | None" = None
 
     @property
     def node_id(self) -> str:
@@ -80,6 +84,7 @@ class LobbyManager:
         await self.repo.save_lobby(lobby)
         await self.repo.save_member(code, member)
         await self.repo.announce_lobby(code)
+        self._local_member = member  # cache local — evita perda por re-roteamento DHT
 
         lobby_info = {
             "code": code, "name": name,
@@ -195,6 +200,7 @@ class LobbyManager:
  
         member_info = self._make_member_info(grpc_addr=my_grpc_addr)
         await self.repo.save_member(code, member_info)
+        self._local_member = member_info  # cache local
         await self._notify_peers(code, game_pb2.LobbyNotification.PLAYER_JOINED)
  
         self.session = LobbySession(
@@ -267,6 +273,10 @@ class LobbyManager:
         if member:
             member.ready = ready
             await self.repo.save_member(self.session.code, member)
+
+        # Actualizar cache local independentemente do resultado do DHT
+        if self._local_member:
+            self._local_member.ready = ready
  
         status = "\033[32mPRONTO\033[0m" if ready else "\033[33mNÃO PRONTO\033[0m"
         print(f"[Lobby] Estás {status}")
@@ -280,7 +290,16 @@ class LobbyManager:
 
     async def _fetch_members(self, code: str) -> list[LobbyMember]:
         candidate_ids = set(self.peers.keys()) | {self.node_id}
-        return await self.repo.list_members(code, candidate_ids)
+        dht_members = await self.repo.list_members(code, candidate_ids)
+
+        # Garantir que o membro local está sempre incluído — o lookup DHT pode
+        # falhar se um novo peer passar a ser o nó mais próximo para esta chave.
+        if self._local_member and self._local_member.node_id == self.node_id:
+            dht_ids = {m.node_id for m in dht_members}
+            if self.node_id not in dht_ids:
+                dht_members = [self._local_member] + dht_members
+
+        return dht_members
 
     
     def _get_owner_id(self) -> str | None:
@@ -340,6 +359,14 @@ class LobbyManager:
             return False
  
         lobby = await self.repo.get_lobby(self.session.code)
+        if lobby is None:
+            # O lookup DHT falhou — provavelmente porque um novo peer entrou na
+            # rede e passou a ser o nó mais próximo para esta chave, mas ainda
+            # não tem os dados (não há republish automático imediato no Kademlia).
+            # Usamos o estado guardado localmente na sessão e republicamos.
+            lobby = self.session.lobby_state
+            if lobby:
+                await self.repo.save_lobby(lobby)
         if not lobby:
             print("[Lobby] Metadados do lobby não encontrados.")
             return False

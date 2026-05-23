@@ -86,7 +86,7 @@ class LobbySession:
         self.is_host   = False
         self.ready     = False
         self.host_addr = ""
-        self.Lobby     = None
+        self.lobby_state = None
 
     @property
     def active(self) -> bool:
