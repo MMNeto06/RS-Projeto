@@ -1,43 +1,36 @@
 #!/usr/bin/env bash
 # run_all_tests.sh — corre todos os testes em sequência
-#
-# Uso:
-#   ./tests/scripts/run_all_tests.sh [--skip-load] [--skip-security] [--skip-cross]
-#                                    [--load-clients N] [--load-rounds N]
-#
+
+# Uso: ./tests/scripts/run_all_tests.sh [--skip-load] [--skip-security] [--skip-cross] [--load-clients N] [--load-rounds N]
+
 # Ordem de execução:
-#   1. Testes unitários          (offline, rápido)
-#   2a. Isolamento de lobby A    (1 lobby, atacante desconhecido)
-#   2b. Isolamento de lobby B    (2 lobbies reais em simultâneo)
-#   3. Testes de segurança       (inputs maliciosos)
-#   4a. Teste de carga base      (--load-clients × --load-rounds, default 20×10)
-#   4b. Teste de carga médio     (50 clientes × 50 rounds)
-#   4c. Teste de carga pesado    (100 clientes × 100 rounds)
-#
-# Cada teste de integração levanta os seus próprios processos de jogo
-# e limpa tudo quando termina. Os processos de um teste não interferem
-# com o seguinte porque cada um usa portas diferentes e espera que as
-# portas da ronda anterior fiquem livres.
-#
-# Flags de skip úteis para desenvolvimento:
-#   --skip-load      Omite todos os testes de carga (mais lentos)
-#   --skip-security  Omite o teste de segurança
-#   --skip-cross     Omite ambos os testes de isolamento (A e B)
+#   1. Testes unitários
+#   2a. Isolamento de lobby A
+#   2b. Isolamento de lobby B
+#   3. Testes de segurança
+#   4a. Teste de carga base
+#   4b. Teste de carga médio
+#   4c. Teste de carga pesado
+
+# Flags de skip úteis:
+#   --skip-load - Omite todos os testes de carga (mais lentos)
+#   --skip-security - Omite o teste de segurança
+#   --skip-cross - Omite ambos os testes de isolamento (A e B)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── Cores (directo, sem source de _lib.sh para evitar o trap global) ──
+# Cores
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
-info()  { echo -e "${CYAN}[INFO]${RESET}  $*"; }
-ok()    { echo -e "${GREEN}[ OK ]${RESET}  $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
-err()   { echo -e "${RED}[ERRO]${RESET}  $*" >&2; }
-step()  { echo -e "\n${BOLD}▶ $*${RESET}"; }
-hr()    { echo -e "${BOLD}$(printf '─%.0s' {1..60})${RESET}"; }
+info() { echo -e "${CYAN}[INFO]${RESET}  $*"; }
+ok() { echo -e "${GREEN}[ OK ]${RESET}  $*"; }
+warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+err() { echo -e "${RED}[ERRO]${RESET}  $*" >&2; }
+step() { echo -e "\n${BOLD}▶ $*${RESET}"; }
+hr() { echo -e "${BOLD}$(printf '─%.0s' {1..60})${RESET}"; }
 
-# ── Parse de argumentos ───────────────────────────────────────────
+# Parse de argumentos
 SKIP_UNIT=false
 SKIP_CROSS=false
 SKIP_SECURITY=false
@@ -47,12 +40,12 @@ LOAD_ROUNDS=10
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --skip-unit)      SKIP_UNIT=true;  shift ;;
-        --skip-cross)     SKIP_CROSS=true; shift ;;
-        --skip-security)  SKIP_SECURITY=true; shift ;;
-        --skip-load)      SKIP_LOAD=true;  shift ;;
-        --load-clients)   LOAD_CLIENTS="$2"; shift 2 ;;
-        --load-rounds)    LOAD_ROUNDS="$2";  shift 2 ;;
+        --skip-unit) SKIP_UNIT=true;  shift ;;
+        --skip-cross) SKIP_CROSS=true; shift ;;
+        --skip-security) SKIP_SECURITY=true; shift ;;
+        --skip-load) SKIP_LOAD=true;  shift ;;
+        --load-clients) LOAD_CLIENTS="$2"; shift 2 ;;
+        --load-rounds) LOAD_ROUNDS="$2";  shift 2 ;;
         -h|--help)
             grep '^#' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -60,14 +53,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Registo de resultados ─────────────────────────────────────────
-declare -A RESULTS   # nome → "PASS" | "FAIL" | "SKIP"
-declare -A DURATIONS # nome → segundos
+# Registo de resultados
+declare -A RESULTS
+declare -A DURATIONS
 
 run_test() {
     local name="$1"; shift
     local label="$1"; shift
-    # restantes args são o comando a executar
 
     if [ "${RESULTS[$name]:-}" = "SKIP" ]; then
         warn "[SKIP] ${label}"
@@ -81,7 +73,6 @@ run_test() {
     local t0
     t0=$(date +%s)
 
-    # Run the test and capture its exit code so we can report why it failed.
     "$@"
     local status=$?
     if [ $status -eq 0 ]; then
@@ -93,7 +84,6 @@ run_test() {
 
     DURATIONS[$name]=$(( $(date +%s) - t0 ))
 
-    # Aguardar que as portas TCP sejam libertadas antes do próximo teste
     info "A aguardar libertação de portas (3s)…"
     sleep 3
 }
@@ -103,19 +93,16 @@ mark_skip() {
     RESULTS[$name]="SKIP"
 }
 
-# ── Marcar testes a saltar ────────────────────────────────────────
-$SKIP_UNIT     && mark_skip "unit"
-$SKIP_CROSS    && mark_skip "cross_a"
-$SKIP_CROSS    && mark_skip "cross_b"
+# Marcar testes a saltar
+$SKIP_UNIT && mark_skip "unit"
+$SKIP_CROSS && mark_skip "cross_a"
+$SKIP_CROSS && mark_skip "cross_b"
 $SKIP_SECURITY && mark_skip "security"
-$SKIP_LOAD     && mark_skip "load"
-$SKIP_LOAD     && mark_skip "load_50"
-$SKIP_LOAD     && mark_skip "load_100"
+$SKIP_LOAD && mark_skip "load"
+$SKIP_LOAD && mark_skip "load_50"
+$SKIP_LOAD && mark_skip "load_100"
 
-# ─────────────────────────────────────────────────────────────────
-# EXECUÇÃO DOS TESTES
-# ─────────────────────────────────────────────────────────────────
-
+# Execução dos testes
 hr
 echo -e "${BOLD}  DnD Deathmatch — Suite de Testes Completa${RESET}"
 hr
@@ -124,11 +111,11 @@ hr
 run_test "unit" "Testes Unitários (offline)" \
     bash "$SCRIPT_DIR/run_unit_test.sh"
 
-# 2a. Isolamento de lobby — Cenário A (1 lobby, atacante desconhecido)
+# 2a. Isolamento de lobby — Cenário A
 run_test "cross_a" "Isolamento de Lobby (Cenário A — atacante desconhecido)" \
     bash "$SCRIPT_DIR/run_cross_lobby_test.sh" --scenario "a"
 
-# 2b. Isolamento de lobby — Cenário B (2 lobbies reais em simultâneo)
+# 2b. Isolamento de lobby — Cenário B
 run_test "cross_b" "Isolamento de Lobby (Cenário B — 2 lobbies reais)" \
     bash "$SCRIPT_DIR/run_cross_lobby_test.sh" --scenario "b"
 
@@ -154,10 +141,7 @@ run_test "load_100" "Teste de Carga (100 clientes × 100 rounds)" \
         --clients 100 \
         --rounds  100
 
-# ─────────────────────────────────────────────────────────────────
-# SUMÁRIO FINAL
-# ─────────────────────────────────────────────────────────────────
-
+# Sumário final
 hr
 echo -e "${BOLD}  SUMÁRIO${RESET}"
 hr

@@ -1,18 +1,15 @@
 """
 test_game_state.py
-Testes unitários ao GameState e LocalPlayer — lógica pura, sem rede.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-COMO CORRER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Estes testes não precisam de nenhum servidor activo — correm
-completamente offline, sem gRPC nem Kademlia.
-
-    # a partir de game/
-    uv run pytest tests/test_game_state.py -v
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Testes unitários ao GameState e LocalPlayer - lógica pura, sem rede.
+ 
+Como correr
+ - usar os scripts bash providenciados. com pwd da pasta game, correr
+    - ./tests/scripts/run_unit_test.sh
+ - setup manual
+    - não precisa de nenhum servidor activo — corre completamente offline,
+      sem gRPC nem Kademlia
+    - a partir de game/, correr:
+        uv run pytest tests/test_game_state.py
 """
 
 import pytest
@@ -25,25 +22,21 @@ from dnd_classes import CLASSES
 def fighter():
     return LocalPlayer(username="alice", node_id="", dnd_class=CLASSES["fighter"])
 
-
 def test_take_damage_clamps_to_zero(fighter):
     fighter.take_damage(9999)
     assert fighter.hp == 0
     assert fighter.alive is False
     assert fighter.deaths == 1
 
-
 def test_heal_does_not_exceed_max(fighter):
     fighter.hp = 10
     fighter.heal(9999)
     assert fighter.hp == fighter.max_hp
 
-
 def test_heal_does_nothing_when_dead(fighter):
     fighter.take_damage(9999)
     fighter.heal(50)
     assert fighter.hp == 0
-
 
 def test_tick_effects_removes_expired_label(fighter):
     fighter.set_effect("mage_armor", duration_secs=-1, label="Mage Armor")
@@ -51,22 +44,18 @@ def test_tick_effects_removes_expired_label(fighter):
     fighter.tick_effects()
     assert "Mage Armor" not in fighter.status_effects
 
-
 def test_active_effect_not_removed_before_expiry(fighter):
     fighter.set_effect("mage_armor", duration_secs=60, label="Mage Armor")
     fighter.tick_effects()
     assert "Mage Armor" in fighter.status_effects
 
-
 def test_cooldown_blocks_ability(fighter):
     fighter.use_ability("Second Wind", cooldown_secs=60)
     assert not fighter.is_ability_ready("Second Wind")
 
-
 def test_cooldown_ready_after_expiry(fighter):
     fighter.use_ability("Second Wind", cooldown_secs=-1)
     assert fighter.is_ability_ready("Second Wind")
-
 
 def test_reset_for_new_match_clears_everything(fighter):
     fighter.take_damage(20)
