@@ -66,7 +66,7 @@ async def main(addr: str, n_clients: int, n_rounds: int):
     print(f"Rounds   : {n_rounds}")
     print(f"Total    : {total}")
     print(f"OK       : {total_ok}")
-    print(f"Erros    : {total_err}  {'⚠️  há problemas de estabilidade' if total_err > 0 else '✓'}")
+    print(f"Erros    : {total_err}  {'AVISO: há problemas de estabilidade' if total_err > 0 else '✓'}")
     print(f"Tempo    : {elapsed:.2f}s")
     print(f"RPS      : {rps:.1f}")
     print(f"{'─'*40}")
