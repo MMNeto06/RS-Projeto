@@ -320,8 +320,10 @@ async def run_menu(
     _game_started = asyncio.Event()
 
     async def _lobby_watcher():
+        await node.lobby_started_event.wait()
+        _game_started.set()
+
         while not _game_started.is_set():
-            await asyncio.sleep(1.5)
             if not node.lobby.session:
                 continue
 

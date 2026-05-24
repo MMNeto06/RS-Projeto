@@ -284,14 +284,25 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             self.state.log_event(
                 f"\033[32m{request.username}\033[0m está \033[1mPRONTO\033[0m."
             )
+            if (request.username != self.state.local.username):
+                print(f"\033[32m{request.username}\033[0m está \033[1mPRONTO\033[0m.")
+            await self.node.lobby.status()
+
         elif request.type == Type.PLAYER_UNREADY:
             self.state.log_event(
                 f"\033[33m{request.username}\033[0m retirou o estado de pronto."
             )
+            if (request.username != self.state.local.username):
+                print(f"\033[33m{request.username}\033[0m retirou o estado de pronto.")
+                
+            await self.node.lobby.status()
+
         elif request.type == Type.LOBBY_STARTED:
             self.state.log_event(
                 "\033[1m\033[32m⚔  O host iniciou o jogo!\033[0m"
             )
+            self.node.lobby_started_event.set()
+
         elif request.type == Type.LOBBY_CLOSED:
             self.state.log_event(
                 f"\033[31mO lobby {request.lobby_code} foi encerrado pelo host.\033[0m"

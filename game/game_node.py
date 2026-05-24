@@ -78,6 +78,7 @@ class GameNode(Router):
         self._channels: dict[str, grpc.aio.Channel] = {}
         self._stubs: dict[str, game_pb2_grpc.GameServiceStub] = {}
         self._last_register = 0.0
+        self.lobby_started_event = asyncio.Event()
 
     @property
     def node_id(self) -> str:

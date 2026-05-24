@@ -24,9 +24,6 @@ class LobbyManager:
         self.session: LobbySession | None = None
         self.known_lobbies: dict[str, tuple[Lobby, float]] = {}
         self.repo = LobbyRepository(kad)
-        # Cache local do membro deste nó — evita depender de um lookup DHT
-        # que pode falhar quando um novo peer entra na rede e passa a ser o
-        # nó mais próximo para a chave desta entrada mas ainda não tem os dados.
         self._local_member: "LobbyMember | None" = None
 
     @property
@@ -84,7 +81,7 @@ class LobbyManager:
         await self.repo.save_lobby(lobby)
         await self.repo.save_member(code, member)
         await self.repo.announce_lobby(code)
-        self._local_member = member  # cache local — evita perda por re-roteamento DHT
+        self._local_member = member 
 
         lobby_info = {
             "code": code, "name": name,
@@ -274,7 +271,6 @@ class LobbyManager:
             member.ready = ready
             await self.repo.save_member(self.session.code, member)
 
-        # Actualizar cache local independentemente do resultado do DHT
         if self._local_member:
             self._local_member.ready = ready
  
@@ -285,15 +281,12 @@ class LobbyManager:
             else game_pb2.LobbyNotification.PLAYER_UNREADY)
         
         await self._notify_peers(self.session.code, notify_type)
-        await self.status()
 
 
     async def _fetch_members(self, code: str) -> list[LobbyMember]:
         candidate_ids = set(self.peers.keys()) | {self.node_id}
         dht_members = await self.repo.list_members(code, candidate_ids)
 
-        # Garantir que o membro local está sempre incluído — o lookup DHT pode
-        # falhar se um novo peer passar a ser o nó mais próximo para esta chave.
         if self._local_member and self._local_member.node_id == self.node_id:
             dht_ids = {m.node_id for m in dht_members}
             if self.node_id not in dht_ids:
@@ -348,6 +341,30 @@ class LobbyManager:
  
         if all_ready and len(members) > 1:
             print("[Lobby] Todos prontos! O host pode usar /lobby start.")
+        
+    async def _notify_and_wait_start(self, timeout: float = 5.0):
+        notification = game_pb2.LobbyNotification()
+        notification.type       = game_pb2.LobbyNotification.LOBBY_STARTED
+        notification.lobby_code = self.session.code
+        notification.username   = self.username
+
+        peers_with_addr = [
+            p for p in self.peers.values() if p.get("grpc_addr")
+        ]
+
+        if not peers_with_addr:
+            return 
+
+        tasks = [
+            self.send_rpc(p["grpc_addr"], 'LobbyNotify', notification)
+            for p in peers_with_addr
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        errors = [r for r in results if isinstance(r, Exception)]
+        if errors:
+            print(f"[Lobby] {len(errors)} peer(s) não responderam — a avançar na mesma.")
 
     async def start(self) -> bool:
         if not self.session:
@@ -360,10 +377,6 @@ class LobbyManager:
  
         lobby = await self.repo.get_lobby(self.session.code)
         if lobby is None:
-            # O lookup DHT falhou — provavelmente porque um novo peer entrou na
-            # rede e passou a ser o nó mais próximo para esta chave, mas ainda
-            # não tem os dados (não há republish automático imediato no Kademlia).
-            # Usamos o estado guardado localmente na sessão e republicamos.
             lobby = self.session.lobby_state
             if lobby:
                 await self.repo.save_lobby(lobby)
@@ -386,7 +399,7 @@ class LobbyManager:
 
         await self.repo.save_lobby(lobby)
         await self._gossip_lobby(lobby)
-        await self._notify_peers(self.session.code, game_pb2.LobbyNotification.LOBBY_STARTED)
+        await self._notify_and_wait_start()
 
         print(f"\033[1m[Lobby] A iniciar o jogo! Boa sorte a todos.\033[0m")
 
@@ -394,16 +407,7 @@ class LobbyManager:
 
     def validate_attack(self, attacker_class: str, damage: int,
                         weapon: str, is_spell: bool) -> tuple[bool, str]:
-        """
-        Chamado no host para validar um ataque antes de este ser aplicado.
 
-        O limite de dano é calculado dinamicamente a partir da definição da classe
-        em dnd_classes.py — não há necessidade de manter valores hardcoded aqui.
-
-        Returns
-        -------
-        (approved: bool, reason: str)
-        """
         max_dmg = max_damage_for_class(attacker_class)
 
         if damage < 0:
