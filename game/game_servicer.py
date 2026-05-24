@@ -196,9 +196,19 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     # ── STATE UPDATE ──────────────────────────────────────────────
 
     async def StateUpdate(self, request, context):
+        peer = context.peer() 
+        
+        host_addr = self.node.lobby.host_addr  
+        if host_addr:
+            peer_ip = peer.split(":")[1] if peer.startswith("ipv4:") else None
+            host_ip = host_addr.split(":")[0]
+            
+            if peer_ip and peer_ip != host_ip:
+                return game_pb2.Ack(received=False, by=self.state.local.username)
+        
         self.state.update_remote(request)
         return game_pb2.Ack(received=True, by=self.state.local.username)
-
+    
     # ── BROADCAST EVENT ───────────────────────────────────────────
 
     async def BroadcastEvent(self, request, context):
@@ -251,19 +261,59 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             )
 
         return game_pb2.ValidateAttackResponse(approved=approved, reason=reason)
+
+    def _addr_for_username(self, username: str) -> str | None:
+        for p in self.node.peers.values():
+            if p.get("username") == username:
+                return p.get("grpc_addr")
+            
+        player = self.state.others.get(username)
+
+        if player:
+            return getattr(player, "grpc_addr", None)
+        
+        return None
     
+    def _verify_sender_ip(self, context, username: str) -> bool:
+        peer = context.peer()  
+
+        if not peer.startswith("ipv4:"):
+            return False  
+
+        peer_ip = peer.split(":")[1]
+
+        expected_addr = self._addr_for_username(username)
+        
+        if not expected_addr:
+            return False
+
+        expected_ip = expected_addr.split(":")[0]
+        
+        return peer_ip == expected_ip
+
     async def HostAttack(self, request, context):
-        # REceives attack as host to process
         if not getattr(self.node, "lobby", None) or not self.node.lobby.is_host:
-            self.state.log_event("[HostAttack] Received HostAttack on non-host — rejected.")
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
+
+        if not self._verify_sender_ip(context, request.attacker):
+            self.state.log_event(
+                f"[Host] ⚠ HostAttack de IP inválido para '{request.attacker}' — rejeitado."
+            )
+            return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
+
         return await self.resolve_attack(request, context)
-    
+
+
     async def HostMove(self, request, context):
-        # Receives move as host to process
         if not getattr(self.node, "lobby", None) or not self.node.lobby.is_host:
-            self.state.log_event("[HostMove] Received HostMove on non-host — rejected.")
             return game_pb2.MoveResult(applied=False)
+
+        if not self._verify_sender_ip(context, request.username):
+            self.state.log_event(
+                f"[Host] ⚠ HostMove de IP inválido para '{request.username}' — rejeitado."
+            )
+            return game_pb2.MoveResult(applied=False)
+
         return await self.resolve_move(request, context)
 
     
