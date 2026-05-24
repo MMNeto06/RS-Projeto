@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
 # run_load_test.sh — teste de carga automático
-#
-# Inicia dois jogadores (alice + loadbot) num lobby, arranca o jogo
-# e corre o load_test.py contra o servidor de alice.
-#
-# Uso:
-#   ./tests/scripts/run_load_test.sh [--clients N] [--rounds N]
-#
+# Uso: ./tests/scripts/run_load_test.sh [--clients N] [--rounds N]
+
 # Opções:
-#   --clients N   Número de clientes simultâneos (default: 20)
-#   --rounds  N   Requests por cliente (default: 10)
-#
+#   --clients N Número de clientes simultâneos (default: 20)
+#   --rounds N Requests por cliente (default: 10)
+
 # O que mede:
 #   - Throughput (RPS) do servidor gRPC sob carga paralela
 #   - Taxa de erro (timeouts / excepções gRPC)
@@ -19,7 +14,7 @@
 
 source "$(dirname "$0")/_lib.sh"
 
-# ── Argumentos ────────────────────────────────────────────────────
+# Argumentos
 CLIENTS=20
 ROUNDS=10
 while [[ $# -gt 0 ]]; do
@@ -30,13 +25,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Portas (ephemeral) ───────────────────────────────────────────
-# Allocate ephemeral ports to avoid collisions between runs
+# Portas
 allocate_pair_ports "ALICE" "BOT"
 
-# Now ALICE_GRPC, ALICE_KAD, BOT_GRPC, BOT_KAD are set
-
-# ── Setup ─────────────────────────────────────────────────────────
+# Setup 
 hr
 step "Teste de Carga gRPC"
 info "Clientes: ${CLIENTS}  Rounds: ${ROUNDS}  Total: $((CLIENTS * ROUNDS)) requests"
@@ -47,10 +39,9 @@ setup_two_player_game \
     "loadbot" "$BOT_GRPC"   "$BOT_KAD"  \
     "loadtest"
 
-# Pequena pausa para o estado do jogo estabilizar
 sleep 2
 
-# ── Teste ─────────────────────────────────────────────────────────
+# Teste
 hr
 step "A correr load_test.py…"
 hr

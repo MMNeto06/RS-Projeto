@@ -1,37 +1,16 @@
 """
 load_test.py
-Teste de carga ao servidor gRPC — mede throughput e taxa de erro
-sob N clientes simultâneos a atacar.
+Teste de carga ao servidor gRPC — mede throughput e taxa de erro sob N clientes simultâneos a atacar.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-COMO CORRER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-é um pouco weird e não sei se está muito bom, mas é assim
- - 2 terminais, ambos a correr o jogo, um com username alice e outro com username loadbot
- - num 3º terminal correr o coamndo
-    uv run python tests/load_test.py <host-addr:gRPC-port>
-
-não sei o quão funcional está
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-O QUE O TESTE MEDE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  Cada "cliente" é uma coroutine asyncio independente que envia
-  --rounds AttackRequests seguidos ao HostAttack do servidor.
-  Todos os clientes correm em paralelo (asyncio.gather).
-
-  No fim imprime:
-    OK      → requests com resposta dentro do timeout (2s)
-    Erros   → timeouts ou excepções gRPC
-    Tempo   → duração total em segundos
-    RPS     → requests processados por segundo
-
-  Resultados a vigiar:
-    - Erros > 0 com poucos clientes  → bottleneck no handler
-    - RPS cai com mais clientes      → não escala bem
-    - Estado inconsistente no jogo   → race condition no servidor
-
+Como correr
+ - usar os scripts bash providenciados. com pwd da pasta game, correr (susbstituir N e M por números se quiserem especificar essas flags)
+    - ./tests/scripts/run_load_test.sh [--clients N] [--requests M]
+ - setup manual
+    - dois terminais, um com username alice (host do lobby) e outro com username loadbot
+    - anotar o endereço e port gRPC do alice
+    - num 3º terminal correr:
+        uv run python tests/load_test.py <aliceAddress:gRPCport>
+        uv run python tests/load_test.py <aliceAddress:gRPCport>
 """
 
 import sys
@@ -45,11 +24,10 @@ import grpc
 import game_pb2
 import game_pb2_grpc
 
-
 async def spam_attacks(addr: str, n_rounds: int, results: list):
-    ch   = grpc.aio.insecure_channel(addr)
+    ch = grpc.aio.insecure_channel(addr)
     stub = game_pb2_grpc.GameServiceStub(ch)
-    req  = game_pb2.AttackRequest(
+    req = game_pb2.AttackRequest(
         attacker="loadbot",
         target="alice",
         attack_roll=10,
@@ -78,10 +56,10 @@ async def main(addr: str, n_clients: int, n_rounds: int):
     ])
     elapsed = time.perf_counter() - t0
 
-    total_ok  = sum(r[0] for r in results)
+    total_ok = sum(r[0] for r in results)
     total_err = sum(r[1] for r in results)
-    total     = total_ok + total_err
-    rps       = total / elapsed if elapsed > 0 else 0
+    total = total_ok + total_err
+    rps = total / elapsed if elapsed > 0 else 0
 
     print(f"{'─'*40}")
     print(f"Clientes : {n_clients}")
