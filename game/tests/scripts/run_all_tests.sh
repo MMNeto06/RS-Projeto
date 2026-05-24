@@ -2,15 +2,17 @@
 # run_all_tests.sh — corre todos os testes em sequência
 #
 # Uso:
-#   ./tests/scripts/run_all_tests.sh [--skip-load] [--skip-security]
-#                                    [--skip-cross]  [--cross-scenario a|b]
+#   ./tests/scripts/run_all_tests.sh [--skip-load] [--skip-security] [--skip-cross]
 #                                    [--load-clients N] [--load-rounds N]
 #
 # Ordem de execução:
-#   1. Testes unitários    (offline, rápido)
-#   2. Isolamento de lobby (1 ou 2 lobbies)
-#   3. Testes de segurança (inputs maliciosos)
-#   4. Teste de carga      (throughput gRPC)
+#   1. Testes unitários          (offline, rápido)
+#   2a. Isolamento de lobby A    (1 lobby, atacante desconhecido)
+#   2b. Isolamento de lobby B    (2 lobbies reais em simultâneo)
+#   3. Testes de segurança       (inputs maliciosos)
+#   4a. Teste de carga base      (--load-clients × --load-rounds, default 20×10)
+#   4b. Teste de carga médio     (50 clientes × 50 rounds)
+#   4c. Teste de carga pesado    (100 clientes × 100 rounds)
 #
 # Cada teste de integração levanta os seus próprios processos de jogo
 # e limpa tudo quando termina. Os processos de um teste não interferem
@@ -18,9 +20,9 @@
 # portas da ronda anterior fiquem livres.
 #
 # Flags de skip úteis para desenvolvimento:
-#   --skip-load      Omite o teste de carga (mais lento)
+#   --skip-load      Omite todos os testes de carga (mais lentos)
 #   --skip-security  Omite o teste de segurança
-#   --skip-cross     Omite o teste de isolamento
+#   --skip-cross     Omite ambos os testes de isolamento (A e B)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -40,7 +42,6 @@ SKIP_UNIT=false
 SKIP_CROSS=false
 SKIP_SECURITY=false
 SKIP_LOAD=false
-CROSS_SCENARIO="a"
 LOAD_CLIENTS=20
 LOAD_ROUNDS=10
 
@@ -50,7 +51,6 @@ while [[ $# -gt 0 ]]; do
         --skip-cross)     SKIP_CROSS=true; shift ;;
         --skip-security)  SKIP_SECURITY=true; shift ;;
         --skip-load)      SKIP_LOAD=true;  shift ;;
-        --cross-scenario) CROSS_SCENARIO="${2,,}"; shift 2 ;;
         --load-clients)   LOAD_CLIENTS="$2"; shift 2 ;;
         --load-rounds)    LOAD_ROUNDS="$2";  shift 2 ;;
         -h|--help)
@@ -105,9 +105,12 @@ mark_skip() {
 
 # ── Marcar testes a saltar ────────────────────────────────────────
 $SKIP_UNIT     && mark_skip "unit"
-$SKIP_CROSS    && mark_skip "cross"
+$SKIP_CROSS    && mark_skip "cross_a"
+$SKIP_CROSS    && mark_skip "cross_b"
 $SKIP_SECURITY && mark_skip "security"
 $SKIP_LOAD     && mark_skip "load"
+$SKIP_LOAD     && mark_skip "load_50"
+$SKIP_LOAD     && mark_skip "load_100"
 
 # ─────────────────────────────────────────────────────────────────
 # EXECUÇÃO DOS TESTES
@@ -121,19 +124,35 @@ hr
 run_test "unit" "Testes Unitários (offline)" \
     bash "$SCRIPT_DIR/run_unit_test.sh"
 
-# 2. Isolamento de lobby
-run_test "cross" "Isolamento de Lobby (cenário ${CROSS_SCENARIO^^})" \
-    bash "$SCRIPT_DIR/run_cross_lobby_test.sh" --scenario "$CROSS_SCENARIO"
+# 2a. Isolamento de lobby — Cenário A (1 lobby, atacante desconhecido)
+run_test "cross_a" "Isolamento de Lobby (Cenário A — atacante desconhecido)" \
+    bash "$SCRIPT_DIR/run_cross_lobby_test.sh" --scenario "a"
+
+# 2b. Isolamento de lobby — Cenário B (2 lobbies reais em simultâneo)
+run_test "cross_b" "Isolamento de Lobby (Cenário B — 2 lobbies reais)" \
+    bash "$SCRIPT_DIR/run_cross_lobby_test.sh" --scenario "b"
 
 # 3. Segurança
 run_test "security" "Testes de Segurança" \
     bash "$SCRIPT_DIR/run_security_test.sh"
 
-# 4. Carga
+# 4a. Carga — configuração base
 run_test "load" "Teste de Carga (${LOAD_CLIENTS} clientes × ${LOAD_ROUNDS} rounds)" \
     bash "$SCRIPT_DIR/run_load_test.sh" \
         --clients "$LOAD_CLIENTS" \
         --rounds  "$LOAD_ROUNDS"
+
+# 4b. Carga — 50 clientes × 50 rounds
+run_test "load_50" "Teste de Carga (50 clientes × 50 rounds)" \
+    bash "$SCRIPT_DIR/run_load_test.sh" \
+        --clients 50 \
+        --rounds  50
+
+# 4c. Carga — 100 clientes × 100 rounds
+run_test "load_100" "Teste de Carga (100 clientes × 100 rounds)" \
+    bash "$SCRIPT_DIR/run_load_test.sh" \
+        --clients 100 \
+        --rounds  100
 
 # ─────────────────────────────────────────────────────────────────
 # SUMÁRIO FINAL
@@ -160,9 +179,12 @@ print_row() {
 }
 
 print_row "unit"     "Testes Unitários"
-print_row "cross"    "Isolamento de Lobby  (cenário ${CROSS_SCENARIO^^})"
+print_row "cross_a"  "Isolamento de Lobby  (Cenário A)"
+print_row "cross_b"  "Isolamento de Lobby  (Cenário B)"
 print_row "security" "Testes de Segurança"
-print_row "load"     "Teste de Carga"
+print_row "load"     "Teste de Carga       (${LOAD_CLIENTS}c × ${LOAD_ROUNDS}r)"
+print_row "load_50"  "Teste de Carga       (50c × 50r)"
+print_row "load_100" "Teste de Carga       (100c × 100r)"
 
 hr
 echo -e "  ${BOLD}Total: ${PASS} PASS  ${FAIL} FAIL  ${SKIP} SKIP${RESET}  (${TOTAL_SECS}s)"

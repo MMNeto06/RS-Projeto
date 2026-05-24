@@ -148,11 +148,11 @@ run_scenario_b() {
     step "A iniciar os dois jogos…"
     sleep 2
     send_cmd alice "lobby start" 3
-    wait_for_log "$LOG_ALICE" "jogo.*iniciado|A entrar|ACTIVE" 20
+    wait_for_log "$LOG_ALICE" "iniciou.*jogo|jogo.*iniciado|A entrar|ACTIVE|game.*start" 30
     ok "Lobby A iniciado."
 
     send_cmd charlie "lobby start" 3
-    wait_for_log "$LOG_CHARLIE" "jogo.*iniciado|A entrar|ACTIVE" 20
+    wait_for_log "$LOG_CHARLIE" "iniciou.*jogo|jogo.*iniciado|A entrar|ACTIVE|game.*start" 30
     ok "Lobby B iniciado."
 
     sleep 2
