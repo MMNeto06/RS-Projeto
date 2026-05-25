@@ -98,3 +98,36 @@ def test_chebyshev_diagonal():
     assert chebyshev(0, 0, 0, 0) == 0
     assert chebyshev(1, 1, 1, 1) == 0
     assert chebyshev(0, 0, 5, 0) == 5
+
+def test_fighter_has_no_spells():
+    fighter_cls = CLASSES["fighter"]
+    spell_names = [ab.name for ab in fighter_cls.abilities if ab.is_spell]
+    assert spell_names == [], f"Fighter não devia ter feitiços: {spell_names}"
+
+
+def test_fighter_ability_names_are_fighter_only():
+    magic_classes = ["wizard", "sorcerer", "warlock"]
+    fighter_names = {ab.name for ab in CLASSES["fighter"].abilities}
+    for cls_key in magic_classes:
+        if cls_key not in CLASSES:
+            continue
+        for ab in CLASSES[cls_key].abilities:
+            assert ab.name not in fighter_names, (
+                f"Abilidade '{ab.name}' do {cls_key} encontrada no Fighter!"
+            )
+
+
+def test_use_ability_out_of_bounds_does_not_crash(fighter):
+    fighter.use_ability("Fireball", cooldown_secs=60)
+    assert not fighter.is_ability_ready("Fireball")
+
+
+def test_fighter_only_has_own_ability_count():
+    assert len(CLASSES["fighter"].abilities) == 3
+
+
+def test_each_class_has_three_abilities():
+    for key, cls in CLASSES.items():
+        assert len(cls.abilities) == 3, (
+            f"Classe '{key}' tem {len(cls.abilities)} abilidades (esperado: 3)"
+        )

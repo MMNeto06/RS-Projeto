@@ -131,13 +131,17 @@ run_scenario_b() {
     send_cmd dave "ready" 1
 
     # Iniciar ambos os jogos
-    step "A iniciar os dois jogos…"
+    # IMPORTANTE: disparar os dois 'lobby start' antes de esperar por qualquer um deles.
+    # Se esperarmos pela confirmação de alice antes de iniciar charlie, o broadcast
+    # MATCH_STARTED de alice chega a charlie via DHT e coloca-o no game loop antes
+    # do script enviar 'lobby start' ao charlie — o padrão de confirmação nunca aparece.
+    step "A iniciar os dois jogos em simultâneo…"
     sleep 2
-    send_cmd alice "lobby start" 3
-    wait_for_log "$LOG_ALICE" "iniciou.*jogo|jogo.*iniciado|A entrar|ACTIVE|game.*start" 30
-    ok "Lobby A iniciado."
+    send_cmd alice   "lobby start" 1
+    send_cmd charlie "lobby start" 1
 
-    send_cmd charlie "lobby start" 3
+    wait_for_log "$LOG_ALICE"   "iniciou.*jogo|jogo.*iniciado|A entrar|ACTIVE|game.*start" 30
+    ok "Lobby A iniciado."
     wait_for_log "$LOG_CHARLIE" "iniciou.*jogo|jogo.*iniciado|A entrar|ACTIVE|game.*start" 30
     ok "Lobby B iniciado."
 
