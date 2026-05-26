@@ -142,6 +142,45 @@ async def _beacon_loop(kad_port: int):
             pass
 
 
+async def _beacon_failover_loop(kad_port: int, initial_bootstrap: bool):
+    if initial_bootstrap:
+        await _beacon_loop(kad_port)
+        return
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    sock.bind(("", _BEACON_PORT))
+    sock.setblocking(False)
+
+    loop = asyncio.get_running_loop()
+    last_heard = loop.time()
+
+    try:
+        while True:
+            try:
+                data, _ = sock.recvfrom(256)
+                if data.startswith(_BEACON_MAGIC + b":"):
+                    last_heard = loop.time()
+            except Exception:
+                pass
+
+            if (loop.time() - last_heard) > 6.0:
+                print("\nBeacon died, starting up again in this node")
+                sock.close()
+                await _beacon_loop(kad_port)
+                return
+
+            await asyncio.sleep(0.5)
+    except Exception:
+        pass
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+
 async def discover_bootstrap(timeout: float = 4.0):
     """
     Escuta beacons UDP na LAN durante `timeout` segundos.
@@ -679,14 +718,13 @@ async def main():
     await node.register_self()
     asyncio.create_task(node._refresh_loop())
 
-    # ── 5. Se somos o bootstrap, anunciar presença na LAN ─────────
-    # O beacon corre em background enquanto o jogo está activo.
-    # Outros nodes que arranquem depois vão ouvir este beacon e
-    # usar este node como ponto de entrada na DHT.
-    beacon_task = None
-    if bootstrap is None:
+    is_initial_bootstrap = (bootstrap is None)
+    if is_initial_bootstrap:
         print(f"[DHT] A emitir beacon na LAN (porta {_BEACON_PORT})…")
-        beacon_task = asyncio.create_task(_beacon_loop(kad_port))
+    
+    beacon_task = asyncio.create_task(
+        _beacon_failover_loop(kad_port, is_initial_bootstrap)
+    )
 
     # ── 6. Menu e jogo ────────────────────────────────────────────
     chosen_class = await run_menu(node.username, args.dnd_class, node)
