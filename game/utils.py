@@ -1,8 +1,5 @@
-"""
-utils.py
-Funções utilitárias partilhadas entre módulos do jogo.
-"""
-# a ser expandido? neste moemnto este ó o único usado por muita gente.
+#Funções utilitárias partilhadas entre módulos do jogo.
+# a ser expandido? neste moemnto este é o único usado por muita gente.
 
 def chebyshev(x1: int, y1: int, x2: int, y2: int) -> int:
     """

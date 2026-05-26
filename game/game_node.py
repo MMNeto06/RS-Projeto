@@ -1,7 +1,4 @@
-"""
-game/game_node.py
-GameNode — integra DHT (Kademlia), servidor gRPC do jogo e loop de input.
-"""
+#GameNode — integra Kademlia, servidor gRPC do jogo e loop de input.
 
 import asyncio
 import time
@@ -84,7 +81,7 @@ class GameNode(Router):
     def node_id(self) -> str:
         return self.kad.node.id.hex()
 
-    # ── KADEMLIA ──────────────────────────────────────────────────
+    #---- KADEMLIA -------------------------------------------------
 
     async def start_kademlia(self):
         await network_handler.init_kad(self.kad, self.kad_port, bootstrap=self.bootstrap)
@@ -188,7 +185,7 @@ class GameNode(Router):
 
 
 
-    # ── BROADCAST ─────────────────────────────────────────────────
+    #--- BROADCAST ----------------------------------------------
 
     async def broadcast_state(self):
         lp = self.state.local
@@ -220,7 +217,7 @@ class GameNode(Router):
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
-    # ── MOVIMENTO ─────────────────────────────────────────────────
+    #---- MOVIMENTO -----------------------------------------------
 
     async def move(self, dx: int, dy: int):
         lp    = self.state.local
@@ -229,7 +226,7 @@ class GameNode(Router):
         await self.route_move(game_pb2.MoveRequest(username = self.username,x = new_x,y = new_y))
 
 
-    # ── RENDER LOOP ───────────────────────────────────────────────
+    #---- RENDER LOOP ----------------------------------------------
 
     async def _render_loop(self):
         while True:
@@ -250,7 +247,7 @@ class GameNode(Router):
             else:
                 await asyncio.sleep(1)
 
-    # ── INPUT LOOP ────────────────────────────────────────────────
+    #---- INPUT LOOP --------------------------------------------------
 
     async def _lobby_sync_loop(self):
         """
@@ -306,7 +303,7 @@ class GameNode(Router):
             self._reader.stop()
 
 
-    # ── MATCH END / RESET ─────────────────────────────────────────
+    #---- MATCH END / RESET --------------------------------------------
 
     async def _broadcast_event(self, event_type, payload: str = ""):
         event = game_pb2.GameEvent(
@@ -353,7 +350,7 @@ class GameNode(Router):
         await self._broadcast_event(game_pb2.GameEvent.MATCH_RESET)
         await self.broadcast_state()
 
-    # ── REFRESH LOOP ──────────────────────────────────────────────
+    #--- REFRESH LOOP --------------------------------------------
 
     async def _refresh_loop(self):
         while True:
@@ -373,7 +370,7 @@ class GameNode(Router):
             
             
 
-    # ── ARRANQUE ──────────────────────────────────────────────────
+    #---- ARRANQUE -------------------------------------------
 
     async def run(self):
         logging.getLogger("kademlia").setLevel(logging.ERROR)

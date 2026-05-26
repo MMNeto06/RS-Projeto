@@ -1,4 +1,4 @@
-"""Helpers for Kademlia-based discovery (non-mutating helpers)."""
+#kad helpers
 import asyncio
 from typing import Iterable, List, Tuple, Dict, Callable, Optional
 

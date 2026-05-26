@@ -4,7 +4,7 @@ Renderização do estado do jogo no terminal com ANSI escape codes.
 
 render_frame(state) imprime o ecrã completo:
 
-  ──────── DEATHMATCH ─ 08:47 ────────
+  -------- DEATHMATCH - 08:47 --------
   mapa 20×10 com jogadores
   HP  ████████████░░░░  45/60   Fighter
   
@@ -16,10 +16,10 @@ render_frame(state) imprime o ecrã completo:
   
   [Ações]  [At]acar  Mover(WASD)  [1]Second Wind  [Q]uit
 
-  > █                    ← cursor fica sempre aqui
+  > █                    <- cursor fica sempre aqui
 
 Estratégia de rendering sem flickering e com input sempre visível
-──────────────────────────────────────────────────────────────────
+------------------------------------------------------------------
 Em vez de guardar/restaurar o cursor (que falha quando o frame
 cresceu desde o último render), fazemos:
 
@@ -36,7 +36,7 @@ import sys
 from game_state import GameState, MatchPhase, MAP_W, MAP_H
 from dnd_classes import CLASSES
 
-# ── CORES ANSI ────────────────────────────────────────────────────
+# -- CORES ANSI ----------------------------------------------------
 
 RESET   = "\033[0m"
 BOLD    = "\033[1m"
@@ -61,14 +61,14 @@ def _player_color(username: str) -> str:
     return _PLAYER_PALETTE[idx]
 
 
-# ── CONSTANTES DE CURSOR ──────────────────────────────────────────
+# -- CONSTANTES DE CURSOR ------------------------------------------
 
 _HOME        = "\033[H"   # cursor para linha 1, coluna 1
 _CLEAR_EOL   = "\033[K"   # apaga do cursor até ao fim da linha
 _CLEAR_BELOW = "\033[J"   # apaga do cursor até ao fim do ecrã
 
 
-# ── HP BAR ────────────────────────────────────────────────────────
+# -- HP BAR --------------------------------------------------------
 
 def render_hp_bar(current: int, maximum: int, width: int = 20) -> str:
     if maximum == 0:
@@ -80,7 +80,7 @@ def render_hp_bar(current: int, maximum: int, width: int = 20) -> str:
     return f"{bar}  {BOLD}{current}/{maximum}{RESET}"
 
 
-# ── MAPA ──────────────────────────────────────────────────────────
+# -- MAPA ----------------------------------------------------------
 
 def render_map(state: GameState) -> str:
     """
@@ -105,7 +105,7 @@ def render_map(state: GameState) -> str:
         symbol = f"{BOLD}{CYAN}☺ {RESET}" if lp.alive else f"{RED}✝ {RESET}"
         grid[lp.y][lp.x] = symbol
 
-    border_h = "─" * (MAP_W * 2 + 2)
+    border_h = "-" * (MAP_W * 2 + 2)
     lines = [f"┌{border_h}┐"]
     for row in grid:
         lines.append("│ " + "".join(row) + " │")
@@ -113,7 +113,7 @@ def render_map(state: GameState) -> str:
     return "\n".join(lines)
 
 
-# ── TIMER ─────────────────────────────────────────────────────────
+# -- TIMER ---------------------------------------------------------
 
 def render_timer(state: GameState) -> str:
     secs = state.time_remaining()
@@ -122,7 +122,7 @@ def render_timer(state: GameState) -> str:
     return f"{color}⏱  {m:02d}:{s:02d}{RESET}"
 
 
-# ── SCOREBOARD ────────────────────────────────────────────────────
+# -- SCOREBOARD ----------------------------------------------------
 
 def render_scoreboard(state: GameState) -> str:
     rows = state.scoreboard()
@@ -137,7 +137,7 @@ def render_scoreboard(state: GameState) -> str:
     return "  ".join(parts)
 
 
-# ── AÇÕES ─────────────────────────────────────────────────────────
+# -- AÇÕES ---------------------------------------------------------
 
 def render_actions(state: GameState) -> str:
     local = state.local
@@ -152,7 +152,7 @@ def render_actions(state: GameState) -> str:
     return "\n".join(lines)
 
 
-# ── FRAME COMPLETO ────────────────────────────────────────────────
+# -- FRAME COMPLETO ------------------------------------------------
 
 def render_frame(
     state: GameState,
@@ -168,7 +168,7 @@ def render_frame(
     clear      : se True, escreve no terminal com a estratégia
                  home + clear-per-line + clear-below
     input_line : linha de prompt a mostrar no fundo (vem de InputReader.prompt_line)
-                 ex: "> a Bob"   ← o utilizador está a escrever "a Bob"
+                 ex: "> a Bob"   <- o utilizador está a escrever "a Bob"
 
     O cursor termina no fim de `input_line`, por isso o utilizador
     continua a ver e editar o seu input normalmente.
@@ -177,7 +177,7 @@ def render_frame(
 
     parts: list[str] = []
 
-    # ── Cabeçalho ────
+    # -- Cabeçalho ----
     phase_label = {
         MatchPhase.LOBBY:    "LOBBY",
         MatchPhase.STARTING: "INICIANDO…",
@@ -186,13 +186,13 @@ def render_frame(
     }[state.phase]
 
     timer  = render_timer(state) if state.phase == MatchPhase.ACTIVE else ""
-    header = f"{BOLD}{YELLOW}{'─'*10} {phase_label} {timer} {'─'*10}{RESET}"
+    header = f"{BOLD}{YELLOW}{'-'*10} {phase_label} {timer} {'-'*10}{RESET}"
     parts.append(header)
 
-    # ── Mapa ────
+    # -- Mapa ----
     parts.append(render_map(state))
 
-    # ── HP bar ────
+    # -- HP bar ----
     status_str = ""
     if lp.status_effects:
         status_str = f"  {YELLOW}" + ", ".join(lp.status_effects) + RESET
@@ -203,23 +203,23 @@ def render_frame(
     )
     parts.append(hp_line)
 
-    # ── Scoreboard ────
+    # -- Scoreboard ----
     parts.append(f"\n{BOLD}Jogadores:{RESET}  {render_scoreboard(state)}")
 
-    # ── Event log ────
+    # -- Event log ----
     if state.event_log:
         parts.append(f"\n{BOLD}Eventos:{RESET}")
         for entry in state.event_log[-6:]:
             parts.append(f"  {entry}")
 
-    # ── Ações ────
+    # -- Ações ----
     parts.append("")
     parts.append(render_actions(state))
 
     output = "\n".join(parts)
 
     if clear:
-        # ── Estratégia de render sem flickering ──────────────────
+        # -- Estratégia de render sem flickering ------------------
         # 1. Cursor para o topo do ecrã
         # 2. Cada linha do frame + \033[K  (evita lixo à direita)
         # 3. Linha de input (prompt + buffer) + \033[K
@@ -236,7 +236,7 @@ def render_frame(
 
     return output
 
-# ── LISTA DE CLASSES ──────────────────────────────────────────────
+# -- LISTA DE CLASSES ----------------------------------------------
 
 def list_classes() -> str:
     """Lista formatada de todas as classes disponíveis, para o menu pré-jogo."""

@@ -21,7 +21,7 @@ class CombatEngine:
     ----------
     state            : estado partilhado do jogo
     peers            : dict de peers (partilhado com GameNode)
-    route_attack_fn  : coroutine async (req, peer) → AttackResult | None
+    route_attack_fn  : coroutine async (req, peer) -> AttackResult | None
                        — a responsabilidade de roteamento pertence ao GameNode
     """
 
@@ -77,7 +77,7 @@ class CombatEngine:
         target_username : alvo (para verificar marked_target_only)
         attack_roll     : valor inicial do roll de ataque
         damage_roll     : valor inicial do roll de dano
-        is_ability      : True → salta modificadores com basic_attack_only=True
+        is_ability      : True -> salta modificadores com basic_attack_only=True
 
         Devolve (novo_attack_roll, novo_damage_roll, extra_notes)
         """
@@ -166,7 +166,7 @@ class CombatEngine:
             lp.kills += (1 if result.target_died else 0)
             self.state.log_event(
                 f"Atacaste {target_username} com {lp.dnd_class.weapon} "
-                f"→ {result.damage_dealt} dano{extras}"
+                f"-> {result.damage_dealt} dano{extras}"
                 + (" 💀 kill!" if result.target_died else "")
             )
         else:
@@ -325,7 +325,7 @@ class CombatEngine:
         if result:
             extras = f"  [{', '.join(extra_notes)}]" if extra_notes else ""
             self.state.log_event(
-                f"{eff.emoji} {ab.name} → {target}: {result.damage_dealt} dano{extras}"
+                f"{eff.emoji} {ab.name} -> {target}: {result.damage_dealt} dano{extras}"
                 + (" 💀" if result.target_died else "")
             )
             if result.target_died:
@@ -364,14 +364,14 @@ class CombatEngine:
             lp.heal(heal)
             extras = f"  [{', '.join(extra_notes)}]" if extra_notes else ""
             self.state.log_event(
-                f"{eff.emoji} {ab.name} → {target}: {result.damage_dealt} dano,"
+                f"{eff.emoji} {ab.name} -> {target}: {result.damage_dealt} dano,"
                 f" +{heal} HP{extras}"
                 + (" 💀" if result.target_died else "")
             )
             if result.target_died:
                 lp.kills += 1
         elif result:
-            self.state.log_event(f"{eff.emoji} {ab.name} → {target}: falhado!")
+            self.state.log_event(f"{eff.emoji} {ab.name} -> {target}: falhado!")
 
     async def _ab_multi_hit(
         self, ab, eff: AbilityEffect, target: str
@@ -406,7 +406,7 @@ class CombatEngine:
 
         lp.kills += kills
         self.state.log_event(
-            f"{eff.emoji} {ab.name} → {target}: "
+            f"{eff.emoji} {ab.name} -> {target}: "
             f"{eff.hit_count} ataques, {total_dmg} dano total"
             + (" 💀" * kills if kills else "")
         )
@@ -461,7 +461,7 @@ class CombatEngine:
                 extras = f"  [{', '.join(extra_notes)}]" if extra_notes else ""
                 if result.hit:
                     self.state.log_event(
-                        f"{eff.emoji} {ab.name} → {t.username}: "
+                        f"{eff.emoji} {ab.name} -> {t.username}: "
                         f"{result.damage_dealt} dano{extras}"
                         + (" 💀" if result.target_died else "")
                     )
@@ -469,7 +469,7 @@ class CombatEngine:
                         lp.kills += 1
                 else:
                     self.state.log_event(
-                        f"{eff.emoji} {ab.name} → {t.username}: falhado!"
+                        f"{eff.emoji} {ab.name} -> {t.username}: falhado!"
                     )
 
         return True

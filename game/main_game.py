@@ -1,7 +1,7 @@
 """
 game/main_game.py  —  entry point do jogo multiplayer
 
-─── Modo automático (recomendado para jogar na mesma rede) ───────────────────
+--- Modo automático (recomendado para jogar na mesma rede) -------------------
 
   # Primeiro a arrancar (torna-se bootstrap, anuncia presença na LAN):
   uv run main_game.py --username Alice
@@ -15,7 +15,7 @@ game/main_game.py  —  entry point do jogo multiplayer
 O IP local é detectado automaticamente. As portas gRPC e Kademlia são
 escolhidas pelo SO (livres). O bootstrap é descoberto via beacon UDP na LAN.
 
-─── Modo manual (para testes / forwarding / WAN) ────────────────────────────
+--- Modo manual (para testes / forwarding / WAN) ----------------------------
 
   # Bootstrap:
   uv run main_game.py --username Alice --host 192.168.1.10 \
@@ -26,13 +26,13 @@ escolhidas pelo SO (livres). O bootstrap é descoberto via beacon UDP na LAN.
                       --grpc-port 50052 --kad-port 8469 \
                       --bootstrap-host 192.168.1.10 --bootstrap-kad-port 8468
 
-─── Flags úteis ─────────────────────────────────────────────────────────────
+--- Flags úteis -------------------------------------------------------------
 
   --first          Salta a descoberta de bootstrap e assume logo o papel
                    de primeiro node (útil se o timeout de 4s for lento).
   --discovery-timeout N   Segundos à espera de beacon (default: 4).
 
-─── Como funciona o --host ──────────────────────────────────────────────────
+--- Como funciona o --host --------------------------------------------------
 
   O servidor gRPC escuta em 0.0.0.0 (todas as interfaces), mas o endereço
   que fica registado na DHT é "{host}:{grpc_port}". Os outros peers lêem
@@ -40,7 +40,7 @@ escolhidas pelo SO (livres). O bootstrap é descoberto via beacon UDP na LAN.
   tenta ligar ao seu próprio loopback — e falha. Na LAN tens de anunciar o
   teu IP 192.168.1.xxx. Este script detecta-o automaticamente.
 
-─── Classes disponíveis ─────────────────────────────────────────────────────
+--- Classes disponíveis -----------------------------------------------------
 
   fighter, wizard, rogue, cleric, ranger, sorcerer, paladin, monk, warlock
 
@@ -69,7 +69,7 @@ from lobby.lobby_enums import LobbyStatus
 import logging
 
 
-# ── CORES ANSI (usadas só no menu) ────────────────────────────────
+# -- CORES ANSI (usadas só no menu) --------------------------------
 
 _R  = "\033[0m"
 _B  = "\033[1m"
@@ -81,7 +81,7 @@ _D  = "\033[2m"
 _M  = "\033[35m"
 
 
-# ── AUTO-DETECÇÃO DE REDE ─────────────────────────────────────────
+# -- AUTO-DETECÇÃO DE REDE -----------------------------------------
 
 def get_lan_ip() -> str:
     """
@@ -111,18 +111,14 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-# ── DESCOBERTA DE BOOTSTRAP VIA UDP BROADCAST ─────────────────────
+# -- DESCOBERTA DE BOOTSTRAP VIA UDP BROADCAST ---------------------
 
 _BEACON_PORT  = 47777          # porta de descoberta (não usada pelo jogo)
 _BEACON_MAGIC = b"DNDGAME_V1"  # evita conflitos com outro tráfego broadcast
 
 
 async def _beacon_loop(kad_port: int):
-    """
-    Corre no background no node bootstrap.
-    Faz broadcast a cada 2 s: "DNDGAME_V1:<kad_port>"
-    Os outros nodes ouvem este beacon e usam-no para o bootstrap.
-    """
+    #udp broadcasts the kad port so other nodes on the LAN can find a node to connect to
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -143,6 +139,7 @@ async def _beacon_loop(kad_port: int):
 
 
 async def _beacon_failover_loop(kad_port: int, initial_bootstrap: bool):
+    #if we aren't the broadcast, listen for the beacon anyway, so if it fails, we can replace it
     if initial_bootstrap:
         await _beacon_loop(kad_port)
         return
@@ -182,18 +179,10 @@ async def _beacon_failover_loop(kad_port: int, initial_bootstrap: bool):
 
 
 async def discover_bootstrap(timeout: float = 4.0):
-    """
-    Escuta beacons UDP na LAN durante `timeout` segundos.
-    Devolve (host_ip, kad_port) do primeiro bootstrap encontrado, ou None.
-
-    Implementação non-blocking: usa asyncio.sleep(0.05) em vez de
-    sock.settimeout, para não bloquear o event loop.
-    """
+    #tries to discover a bootstrap node on the established port for beacon
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # SO_REUSEPORT permite que vários jogadores na mesma máquina
-        # ouçam ao mesmo tempo (útil em testes locais).
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         except (AttributeError, OSError):
@@ -230,30 +219,30 @@ async def discover_bootstrap(timeout: float = 4.0):
             pass
 
 
-# ── VERIFICAÇÃO DE USERNAME ────────────────────────────────────────
+# -- VERIFICAÇÃO DE USERNAME ----------------------------------------
 
 async def _username_is_free(node: "GameNode", name: str) -> bool:
     """
     Verifica se um username está disponível na DHT.
 
     1. Consulta a chave username:<name> na DHT.
-    2. Se não existir → livre.
+    2. Se não existir -> livre.
     3. Se existir, tenta fazer Ping ao node correspondente.
-       - Sem resposta → entrada obsoleta → consideramos livre.
-       - Com resposta → username realmente em uso.
+       - Sem resposta -> entrada obsoleta -> consideramos livre.
+       - Com resposta -> username realmente em uso.
     """
 
     existing_id = await node.kad.get(username_key(name))
     if not existing_id:
         return True
 
-    # Mesmo node_id → somos nós próprios (mudança de username para o mesmo valor)
+    # Mesmo node_id -> somos nós próprios (mudança de username para o mesmo valor)
     if existing_id == node.node_id:
         return True
 
     addr = await node.kad.get(addr_key(existing_id))
     if not addr:
-        return True  # node_id sem endereço → entrada obsoleta
+        return True  # node_id sem endereço -> entrada obsoleta
 
     try:
         try:
@@ -264,14 +253,14 @@ async def _username_is_free(node: "GameNode", name: str) -> bool:
                 stub.Ping(game_pb2.PingRequest(from_user=node.username)),
                 timeout=2.0,
             )
-            return False  # respondeu → username em uso
+            return False  # respondeu -> username em uso
         except Exception:
             return True
     except Exception:
-        return True   # não respondeu → entrada obsoleta
+        return True   # não respondeu -> entrada obsoleta
 
 
-# ── MENU ──────────────────────────────────────────────────────────
+# -- MENU ----------------------------------------------------------
 
 BANNER = f"""\
 {_B}{_Y}
@@ -552,7 +541,7 @@ async def run_menu(
             pass
 
 
-# ── ARGS ──────────────────────────────────────────────────────────
+# -- ARGS ----------------------------------------------------------
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -564,19 +553,19 @@ def parse_args():
         ),
     )
 
-    # ── Username (opcional — pedido interactivamente se omitido) ──
+    # -- Username (opcional — pedido interactivamente se omitido) --
     p.add_argument(
         "--username", required=False, default=None,
         help="O teu username (único na rede). Se omitido, é pedido no arranque.",
     )
 
-    # ── Classe (opcional; pode escolher-se no menu) ───────────────
+    # -- Classe (opcional; pode escolher-se no menu) ---------------
     p.add_argument(
         "--class", dest="dnd_class", default=None,
         help="Classe DnD inicial (pode ser mudada no menu)",
     )
 
-    # ── Rede — tudo opcional; auto-detectado se omitido ───────────
+    # -- Rede — tudo opcional; auto-detectado se omitido -----------
     p.add_argument(
         "--host", default=None,
         help=(
@@ -593,7 +582,7 @@ def parse_args():
         help="Porta Kademlia deste node (default: porta livre escolhida pelo SO).",
     )
 
-    # ── Bootstrap manual ──────────────────────────────────────────
+    # -- Bootstrap manual ------------------------------------------
     p.add_argument(
         "--bootstrap-host", default=None,
         help=(
@@ -606,7 +595,7 @@ def parse_args():
         help="Porta Kademlia do node bootstrap (necessário com --bootstrap-host).",
     )
 
-    # ── Flags de comportamento ────────────────────────────────────
+    # -- Flags de comportamento ------------------------------------
     p.add_argument(
         "--first", action="store_true",
         help=(
@@ -620,7 +609,7 @@ def parse_args():
         help="Segundos à espera de um beacon de bootstrap (default: 4).",
     )
 
-    # ── Outros ───────────────────────────────────────────────────
+    # -- Outros ---------------------------------------------------
     p.add_argument(
         "--match-id", default="match1",
         help="Identificador da partida (default: match1)",
@@ -629,12 +618,12 @@ def parse_args():
     return p.parse_args()
 
 
-# ── MAIN ──────────────────────────────────────────────────────────
+# -- MAIN ----------------------------------------------------------
 
 async def main():
     args = parse_args()
 
-    # ── 0. Username (pedido interactivamente se não foi passado via flag) ──
+    # -- 0. Username (pedido interactivamente se não foi passado via flag) --
     if not args.username:
         while True:
             args.username = input("Username: ").strip()
@@ -642,7 +631,7 @@ async def main():
                 break
             print("Username não pode ser vazio.")
 
-    # ── 1. Resolver o IP anunciado ────────────────────────────────
+    # -- 1. Resolver o IP anunciado --------------------------------
     if args.host:
         host = args.host
         print(f"[Rede] Host manual: {host}")
@@ -650,12 +639,12 @@ async def main():
         host = get_lan_ip()
         print(f"[Rede] Host auto-detectado: {host}")
 
-    # ── 2. Resolver as portas ─────────────────────────────────────
+    # -- 2. Resolver as portas -------------------------------------
     grpc_port = args.grpc_port if args.grpc_port else find_free_port()
     kad_port  = args.kad_port  if args.kad_port  else find_free_port()
     print(f"[Rede] gRPC:{grpc_port}  Kademlia:{kad_port}")
 
-    # ── 3. Resolver o bootstrap ───────────────────────────────────
+    # -- 3. Resolver o bootstrap -----------------------------------
     bootstrap = None
 
     if args.bootstrap_host and args.bootstrap_kad_port:
@@ -679,10 +668,10 @@ async def main():
             bootstrap = result
             print(f"[DHT] Bootstrap encontrado: {result[0]}:{result[1]}")
         else:
-            print("[DHT] Nenhum bootstrap encontrado → este node é o primeiro.")
+            print("[DHT] Nenhum bootstrap encontrado -> este node é o primeiro.")
             bootstrap = None
 
-    # ── 4. Criar e arrancar o GameNode ────────────────────────────
+    # -- 4. Criar e arrancar o GameNode ----------------------------
     placeholder_class = get_class(args.dnd_class) if args.dnd_class else get_class("fighter")
 
     node = GameNode(
@@ -700,7 +689,7 @@ async def main():
     await node.start_kademlia()
     await node.start_grpc_server()
 
-    # ── 4a. Verificar disponibilidade do username ─────────────────
+    # -- 4a. Verificar disponibilidade do username -----------------
     # Feito após start_kademlia + start_grpc_server para podermos
     # fazer Ping aos peers e também responder a pings durante a espera.
     print(f"[DHT] A verificar disponibilidade do username '{node.username}'…")
@@ -726,7 +715,7 @@ async def main():
         _beacon_failover_loop(kad_port, is_initial_bootstrap)
     )
 
-    # ── 6. Menu e jogo ────────────────────────────────────────────
+    # -- 6. Menu e jogo --------------------------------------------
     chosen_class = await run_menu(node.username, args.dnd_class, node)
     if chosen_class is None:
         if node.grpc_server:
@@ -747,7 +736,7 @@ async def main():
 
     await node.input_loop()
 
-    # ── 7. Notificar peers da saída ───────────────────────────────
+    # -- 7. Notificar peers da saída -------------------------------
     # Usa node.username (pode ter mudado em relação a args.username original)
     leave_req = game_pb2.LeaveNotification(username=node.username)
     tasks = [

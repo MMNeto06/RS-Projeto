@@ -75,7 +75,7 @@ class InputReader:
             pass
         self._started = False
 
-    # ── LEITURA ────────────────────────────────────────────────────
+    # -- LEITURA ----------------------------------------------------
 
     def _on_readable(self):
         try:
@@ -116,7 +116,7 @@ class InputReader:
             elif ord(char) >= 32:               # caracteres imprimíveis
                 self.buffer += char
 
-    # ── UTILITÁRIO PARA O RENDERER ─────────────────────────────────
+    # -- UTILITÁRIO PARA O RENDERER ---------------------------------
 
     @property
     def prompt_line(self) -> str:

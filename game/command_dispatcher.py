@@ -8,7 +8,7 @@ deixando o input_loop com apenas o ciclo de leitura.
 
 Uso:
     dispatcher = CommandDispatcher(node)
-    running = await dispatcher.dispatch(text)   # False → utilizador quer sair
+    running = await dispatcher.dispatch(text)   # False -> utilizador quer sair
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ class CommandDispatcher:
     """
     Recebe uma linha de texto e executa o comando correspondente no node.
 
-    dispatch(text) → bool
-        True  → continuar o loop
-        False → sair (comando 'q')
+    dispatch(text) -> bool
+        True  -> continuar o loop
+        False -> sair (comando 'q')
     """
 
     def __init__(self, node: "GameNode"):
@@ -151,12 +151,12 @@ class CommandDispatcher:
     def _print_lobby_help() -> None:
         print("""
             [Lobby] Comandos disponíveis:
-            lobby create <nome> <maxJogadores>  → Criar um novo lobby
-            lobby list                          → Listar lobbies abertos
-            lobby join <Código>                 → Entrar num lobby
-            lobby leave                         → Sair do lobby actual
-            lobby start                         → Iniciar o jogo (só o host)
-            lobby status                        → Ver quem está pronto
-            ready                               → Marcar-se como pronto
-            unready                             → Retirar estado de pronto
+            lobby create <nome> <maxJogadores>  -> Criar um novo lobby
+            lobby list                          -> Listar lobbies abertos
+            lobby join <Código>                 -> Entrar num lobby
+            lobby leave                         -> Sair do lobby actual
+            lobby start                         -> Iniciar o jogo (só o host)
+            lobby status                        -> Ver quem está pronto
+            ready                               -> Marcar-se como pronto
+            unready                             -> Retirar estado de pronto
         """)

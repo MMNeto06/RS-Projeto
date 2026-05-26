@@ -34,7 +34,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         player = self.state.others.get(username)
         return player, False
 
-    # ── CHAT ──────────────────────────────────────────────────────
+    # -- CHAT ------------------------------------------------------
 
     async def SendMessage(self, request, context):
         ts = time.strftime("%H:%M:%S", time.localtime(request.timestamp))
@@ -42,14 +42,14 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         print("> ", end="", flush=True)
         return game_pb2.Ack(received=True, by=self.state.local.username)
 
-    # ── PING ──────────────────────────────────────────────────────
+    # -- PING ------------------------------------------------------
 
     async def Ping(self, request, context):
         return game_pb2.PingResponse(
             username=self.state.local.username, alive=True
         )
 
-    # ── JOIN ──────────────────────────────────────────────────────
+    # -- JOIN ------------------------------------------------------
 
     async def Join(self, request, context):
         self.state.log_event(
@@ -68,14 +68,14 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             )
         return game_pb2.Ack(received=True, by=self.state.local.username)
 
-    # ── LEAVE ─────────────────────────────────────────────────────
+    # -- LEAVE -----------------------------------------------------
 
     async def Leave(self, request, context):
         self.state.others.pop(request.username, None)
         self.state.log_event(f"\033[31m{request.username}\033[0m saiu do jogo.")
         return game_pb2.Ack(received=True, by=self.state.local.username)
 
-    # ── ATTACK ────────────────────────────────────────────────────
+    # -- ATTACK ----------------------------------------------------
 
     async def Attack(self, request, context):
         local = self.state.local
@@ -86,7 +86,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                 target_hp_remaining=local.hp, target_died=False,
             )
 
-        # ── Validação de range (segunda linha de defesa) ───────────
+        # -- Validação de range (segunda linha de defesa) -----------
         # O check principal acontece no atacante (game_node), mas validamos
         # aqui também com a posição que o atacante declarou.
         if request.effective_range > 0:
@@ -104,7 +104,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                     target_hp_remaining=local.hp, target_died=False,
                 )
 
-        # ── Disengage — o jogador local está imune ─────────────────
+        # -- Disengage — o jogador local está imune -----------------
         if local.is_effect_active("disengaged"):
             self.state.log_event(
                 f"{request.attacker} tentou atacar — \033[32mDesviaste (Disengage)!\033[0m"
@@ -193,7 +193,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    # ── STATE UPDATE ──────────────────────────────────────────────
+    # -- STATE UPDATE ----------------------------------------------
 
     async def StateUpdate(self, request, context):
         peer = context.peer() 
@@ -209,7 +209,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         self.state.update_remote(request)
         return game_pb2.Ack(received=True, by=self.state.local.username)
     
-    # ── BROADCAST EVENT ───────────────────────────────────────────
+    # -- BROADCAST EVENT -------------------------------------------
 
     async def BroadcastEvent(self, request, context):
         if request.type == GameEvent.PLAYER_DIED:
@@ -241,7 +241,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     
     
 
-    # ── VALIDATE ATTACK ───────────────────────────────────────────
+    # -- VALIDATE ATTACK -------------------------------------------
 
     async def ValidateAttack(self, request, context):
         if not self.node.lobby.is_host:
@@ -317,7 +317,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         return await self.resolve_move(request, context)
 
     
-    # ── LOBBY NOTIFY ──────────────────────────────────────────────
+    # -- LOBBY NOTIFY ----------------------------------------------
 
     async def LobbyNotify(self, request, context):
         Type = game_pb2.LobbyNotification.Type

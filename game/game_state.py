@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 
 from dnd_classes import DnDClass
 
-# ── MAPA ──────────────────────────────────────────────────────────
+# -- MAPA ----------------------------------------------------------
 
 MAP_W = 20
 MAP_H = 10
@@ -19,7 +19,7 @@ MAP_H = 10
 MATCH_DURATION = 300   # segundos (5 minutos)
 
 
-# ── ESTADO DA PARTIDA ─────────────────────────────────────────────
+# -- ESTADO DA PARTIDA ---------------------------------------------
 
 class MatchPhase(Enum):
     LOBBY    = auto()
@@ -28,7 +28,7 @@ class MatchPhase(Enum):
     ENDED    = auto()
 
 
-# ── JOGADOR LOCAL ─────────────────────────────────────────────────
+# -- JOGADOR LOCAL -------------------------------------------------
 
 @dataclass
 class LocalPlayer:
@@ -80,7 +80,7 @@ class LocalPlayer:
                 ac += eff.ac_bonus
         return ac
 
-    # ── COOLDOWNS ─────────────────────────────────────────────────
+    # -- COOLDOWNS -------------------------------------------------
 
     def is_ability_ready(self, ability_name: str) -> bool:
         return time.time() >= self.ability_cooldowns.get(ability_name, 0)
@@ -92,7 +92,7 @@ class LocalPlayer:
         if cooldown_secs > 0:
             self.ability_cooldowns[ability_name] = time.time() + cooldown_secs
 
-    # ── EFEITOS ACTIVOS ───────────────────────────────────────────
+    # -- EFEITOS ACTIVOS -------------------------------------------
 
     def is_effect_active(self, effect_name: str) -> bool:
         return time.time() < self.active_effects.get(effect_name, 0)
@@ -133,7 +133,7 @@ class LocalPlayer:
         if not self.is_effect_active("hunters_mark") and not self.is_effect_active("hex_mark"):
             self.marked_target = ""
 
-    # ── DANO / CURA ───────────────────────────────────────────────
+    # -- DANO / CURA -----------------------------------------------
 
     def take_damage(self, amount: int) -> int:
         self.hp = max(0, self.hp - amount)
@@ -153,7 +153,7 @@ class LocalPlayer:
         self.x, self.y = x, y
         self.status_effects.clear()
 
-    # ── RESET DE PARTIDA ──────────────────────────────────────────
+    # -- RESET DE PARTIDA ------------------------------------------
 
     def reset_for_new_match(self, x: int, y: int):
         """Repõe o jogador para uma nova partida (kills/deaths a 0, HP cheio, sem cooldowns)."""
@@ -168,7 +168,7 @@ class LocalPlayer:
         self.marked_target = ""
 
 
-# ── PEER REMOTO ───────────────────────────────────────────────────
+# -- PEER REMOTO ---------------------------------------------------
 
 @dataclass
 class RemotePlayer:
@@ -188,7 +188,7 @@ class RemotePlayer:
     last_seen:      float = field(default_factory=time.time)
 
 
-# ── ESTADO GLOBAL DA PARTIDA ──────────────────────────────────────
+# -- ESTADO GLOBAL DA PARTIDA --------------------------------------
 
 class GameState:
     def __init__(self, local: LocalPlayer):
@@ -199,7 +199,7 @@ class GameState:
         self.start_time: Optional[float]         = None
         self.event_log:  List[str]               = []
 
-    # ── TEMPO ─────────────────────────────────────────────────────
+    # -- TEMPO -----------------------------------------------------
 
     def time_remaining(self) -> int:
         if self.phase != MatchPhase.ACTIVE or self.start_time is None:
@@ -209,7 +209,7 @@ class GameState:
     def check_match_end(self) -> bool:
         return self.phase == MatchPhase.ACTIVE and self.time_remaining() == 0
 
-    # ── EVENTOS ───────────────────────────────────────────────────
+    # -- EVENTOS ---------------------------------------------------
 
     def log_event(self, msg: str):
         ts = time.strftime("%H:%M:%S")
@@ -217,7 +217,7 @@ class GameState:
         if len(self.event_log) > 8:
             self.event_log.pop(0)
 
-    # ── ACTUALIZAR ESTADO REMOTO ──────────────────────────────────
+    # -- ACTUALIZAR ESTADO REMOTO ----------------------------------
 
     def update_remote(self, pb_state) -> None:
         username = pb_state.username
@@ -258,14 +258,14 @@ class GameState:
             last_seen=time.time(),
         )
 
-    # ── RESET REMOTES PARA NOVA PARTIDA ───────────────────────────
+    # -- RESET REMOTES PARA NOVA PARTIDA ---------------------------
 
     def reset_others_for_new_match(self):
         for p in self.others.values():
             p.kills  = 0
             p.deaths = 0
 
-    # ── SPAWN ALEATÓRIO ───────────────────────────────────────────
+    # -- SPAWN ALEATÓRIO -------------------------------------------
 
     def random_spawn(self) -> tuple[int, int]:
         occupied = {(p.x, p.y) for p in self.others.values()}
@@ -276,7 +276,7 @@ class GameState:
             if (x, y) not in occupied:
                 return x, y
 
-    # ── SCOREBOARD ────────────────────────────────────────────────
+    # -- SCOREBOARD ------------------------------------------------
 
     def scoreboard(self) -> List[tuple[str, int, int]]:
         rows = [(self.local.username, self.local.kills, self.local.deaths)]
