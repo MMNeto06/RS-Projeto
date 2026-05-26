@@ -70,6 +70,9 @@ async def main(addr: str, n_clients: int, n_rounds: int):
     print(f"Tempo    : {elapsed:.2f}s")
     print(f"RPS      : {rps:.1f}")
     print(f"{'─'*40}")
+    
+    if total_err > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

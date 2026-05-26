@@ -67,8 +67,10 @@ def run_test(host_addr: str, attacker: str, target: str, attacker_addr: str = ""
 
     if not blocked:
         print("\033[31m[!] O host processou um ataque de fora do lobby — isolamento quebrado!\033[0m")
+        return False
     else:
         print("O host rejeitou o ataque — atacante não reconhecido no lobby.")
+        return True
 
 
 def main():
@@ -79,12 +81,15 @@ def main():
     p.add_argument("--attacker-addr", default="", help="(Opcional) Endereço gRPC do lobby B, apenas para documentar o cenário")
     args = p.parse_args()
 
-    run_test(
+    success = run_test(
         host_addr=args.host_addr,
         attacker=args.attacker,
         target=args.target,
         attacker_addr=args.attacker_addr,
     )
+    
+    if not success:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

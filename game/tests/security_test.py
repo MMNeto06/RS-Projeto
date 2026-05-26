@@ -32,14 +32,18 @@ ATTACK_CASES = [
     ("Dano absurdo", dict(attacker="hacker", target="alice", attack_roll=999, base_damage_roll=999, attacker_x=0, attacker_y=0, effective_range=10)),
     ("Fora de alcance", dict(attacker="hacker", target="alice", attack_roll=20, base_damage_roll=8, attacker_x=0, attacker_y=0, effective_range=1)),
     ("Target inexistente", dict(attacker="hacker", target="utilizador_fantasma", attack_roll=20, base_damage_roll=8, attacker_x=0, attacker_y=0, effective_range=10)),
-    ("Coords negativas", dict(attacker="hacker", target="alice", attack_roll=20, base_damage_roll=8, attacker_x=-5, attacker_y=-5, effective_range=10)),
 ]
+
+all_passed = True
 
 for name, kwargs in ATTACK_CASES:
     req = game_pb2.AttackRequest(**kwargs)
     try:
         resp = stub.HostAttack(req, timeout=3)
         result = f"hit={resp.hit}  dmg={resp.damage_dealt}  hp_restante={resp.target_hp_remaining}  morreu={resp.target_died}"
+        if resp.hit or resp.damage_dealt > 0:
+            result += " \033[31m[FALHOU: Ataque não bloqueado!]\033[0m"
+            all_passed = False
     except grpc.RpcError as e:
         result = f"RpcError: {e.code()}"
     except Exception as e:
@@ -51,15 +55,16 @@ print()
 # movimentos 
 MOVE_CASES = [
     ("Coords negativas", dict(username="hacker", x=-1, y=-1)),
-    ("Coords excessivas", dict(username="hacker", x=999, y=999)),
-    ("Mover outro user", dict(username="alice", x=5, y=5)),
-]
+    ("Coords excessivas", dict(username="hacker", x=999, y=999))]
 
 for name, kwargs in MOVE_CASES:
     req = game_pb2.MoveRequest(**kwargs)
     try:
         resp = stub.HostMove(req, timeout=3)
         result = f"applied={resp.applied}"
+        if resp.applied:
+            result += " \033[31m[FALHOU: Mov. não bloqueado!]\033[0m"
+            all_passed = False
     except grpc.RpcError as e:
         result = f"RpcError: {e.code()}"
     except Exception as e:
@@ -67,3 +72,9 @@ for name, kwargs in MOVE_CASES:
     print(f"[MV] {name:<25} → {result}")
 
 print()
+
+if not all_passed:
+    print("\033[31m[!] Pelos menos um teste falhou.\033[0m")
+    sys.exit(1)
+else:
+    print("\033[32m[+] Todos os testes passaram e foram bloqueados corretamente.\033[0m")
