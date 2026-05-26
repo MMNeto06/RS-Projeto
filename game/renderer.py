@@ -108,7 +108,7 @@ def render_map(state: GameState) -> str:
     border_h = "─" * (MAP_W * 2 + 2)
     lines = [f"┌{border_h}┐"]
     for row in grid:
-        lines.append("│ " + "".join(row) + "│")
+        lines.append("│ " + "".join(row) + " │")
     lines.append(f"└{border_h}┘")
     return "\n".join(lines)
 
