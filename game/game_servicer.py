@@ -232,20 +232,21 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         # broadcast update
         tasks = []
-        my_addr = f"{self.node.host}:{self.node.grpc_port}"
-        seen_addrs: set[str] = set()
+        seen = set()
         for nid, p in self.node.peers.items():
-            addr = p.get("grpc_addr")
-            if not addr or addr == my_addr or addr in seen_addrs:
+            if nid == self.node.node_id:
                 continue
-            seen_addrs.add(addr)
+            addr = p.get("grpc_addr")
+            if not addr:
+                continue
             tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps))
+            seen.add(addr)
 
         for _, o in self.state.others.items():
             addr = getattr(o, "grpc_addr", "")
-            if addr and addr != my_addr and addr not in seen_addrs:
+            if addr and addr not in seen:
                 tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps))
-                seen_addrs.add(addr)
+                seen.add(addr)
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -611,14 +612,13 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         # Broadcast target state
         self.state.log_event("attack resolved by host and will be broadcast")
         tasks = []
-        my_addr = f"{self.node.host}:{self.node.grpc_port}"
-        seen_addrs: set[str] = set()
-        snapshot = list(self.node.peers.items())
+        snapshot = self.node.peers.items()
         for nid, p in snapshot: #broadcast to each peer in lobby
-            addr = p.get("grpc_addr")
-            if not addr or addr == my_addr or addr in seen_addrs:
+            if nid == self.node.node_id: # skip self
                 continue
-            seen_addrs.add(addr)
+            addr = p.get("grpc_addr")
+            if not addr:
+                continue
             tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps_target))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -675,14 +675,13 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             ps = remote_player_to_proto(user, state.match_id)
 
         tasks = []
-        my_addr = f"{self.node.host}:{self.node.grpc_port}"
-        seen_addrs: set[str] = set()
-        snapshot = list(self.node.peers.items())
-        for nid, p in snapshot:
-            addr = p.get("grpc_addr")
-            if not addr or addr == my_addr or addr in seen_addrs:
+        snapshot = self.node.peers.items()
+        for nid, p in snapshot: #broadcast to each peer in lobby
+            if nid == self.node.node_id: # skip self
                 continue
-            seen_addrs.add(addr)
+            addr = p.get("grpc_addr")
+            if not addr:
+                continue
             tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)

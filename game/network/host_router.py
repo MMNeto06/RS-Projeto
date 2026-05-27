@@ -35,7 +35,7 @@ class Router:
             else:
                 host_addr = self.lobby.host_addr
                 if host_addr:
-                    return await self.send_rpc(host_addr, 'HostMove', req, timeout=1.0)
+                    return await self.send_rpc(host_addr, 'HostMove', req)
                 return None
 
         # ── Sem lobby: aplica localmente e difunde ─────────────────
