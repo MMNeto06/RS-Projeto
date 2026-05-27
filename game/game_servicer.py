@@ -282,7 +282,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         if not peer.startswith("ipv4:"):
             print(f"[DEBUG] não é ipv4, a deixar passar") 
             # NOTA: dantes eu metia false aqui, vê se resulta com true
-            return False
+            return True
 
         peer_ip = peer.split(":")[1]
         if peer_ip == "127.0.0.1":
