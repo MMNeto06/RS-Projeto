@@ -76,7 +76,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     async def Join(self, request, context):
         import time as _time
         grpc_addr = f"{request.grpc_address}:{request.port}"
-        self._dbg(f"Join RECV START username={request.username} addr={grpc_addr} peer={context.peer()}")
+        self._dbg(f"Join recv username={request.username} addr={grpc_addr} peer={context.peer()}")
 
         # Procurar entrada existente pelo username (case-insensitive)
         existing_key = next(
@@ -123,7 +123,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         self.state.log_event(
             f"\033[32m{request.username}\033[0m ({request.class_name}) entrou no jogo."
         )
-        self._dbg(f"Join APPLIED others={len(self.state.others)} peers={len(self.node.peers)}")
+        self._dbg(f"Join applied others={len(self.state.others)} peers={len(self.node.peers)}")
         return game_pb2.Ack(received=True, by=self.state.local.username)
 
     # -- LEAVE -----------------------------------------------------
