@@ -391,7 +391,68 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             return remote
 
         return None
-    
+
+    def _ensure_peer_from_context(self, username: str, context) -> None:
+        """Regista um peer em state.others e node.peers usando o IP do contexto gRPC,
+        caso o seu Join nunca tenha chegado. Usado pelo host em HostMove/HostAttack."""
+        # Ja conhecido?
+        already = next(
+            (p for p in self.state.others.values()
+             if p.username.lower() == username.lower()),
+            None,
+        )
+        if already:
+            return
+
+        # Extrair IP do contexto gRPC (ex: "ipv4:10.x.x.x:PORT")
+        peer_str = context.peer() if context else ""
+        peer_ip  = GameServicer._extract_ip(peer_str)
+        if not peer_ip:
+            self._dbg(f"_ensure_peer_from_context cannot extract IP for {username}")
+            return
+
+        # Procurar porta gRPC correta nos peers ja conhecidos pelo mesmo IP
+        grpc_addr = ""
+        for p in self.node.peers.values():
+            existing_addr = p.get("grpc_addr", "")
+            if existing_addr.startswith(peer_ip + ":"):
+                grpc_addr = existing_addr
+                break
+
+        # Fallback: usar IP com porta gRPC padrao do node
+        if not grpc_addr:
+            grpc_addr = f"{peer_ip}:{self.node.grpc_port}"
+
+        self._dbg(f"_ensure_peer_from_context registering username={username} addr={grpc_addr}")
+
+        # Registar em state.others
+        self.state.others[username] = RemotePlayer(
+            username=username,
+            node_id=username,
+            grpc_addr=grpc_addr,
+            hp=1, max_hp=1, x=0, y=0,
+            alive=True,
+            class_name="",
+            armor_class=0, kills=0, deaths=0,
+        )
+
+        # Registar em node.peers se ainda nao estiver la
+        existing_peer = next(
+            (p for p in self.node.peers.values()
+             if p.get("username", "").lower() == username.lower()),
+            None,
+        )
+        if not existing_peer:
+            import time as _time
+            tmp_key = f"join_{username}"
+            self.node.peers[tmp_key] = {
+                "node_id":    tmp_key,
+                "username":   username,
+                "grpc_addr":  grpc_addr,
+                "last_seen":  _time.time(),
+                "class_name": "",
+            }
+
     def _verify_sender_ip(self, context, username: str) -> bool:
         return True
 
@@ -410,6 +471,9 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             self._dbg("HostAttack rejected by verify_sender_ip")
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
 
+        # Se o atacante ainda não é conhecido, registá-lo agora
+        self._ensure_peer_from_context(request.attacker, context)
+
         return await self.resolve_attack(request, context)
 
 
@@ -425,6 +489,10 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             )
             self._dbg("HostMove rejected by verify_sender_ip")
             return game_pb2.MoveResult(applied=False)
+
+        # Se o peer ainda não é conhecido (Join nunca chegou), registá-lo agora
+        # a partir do IP do contexto gRPC. Sem este registo, resolve_move rejeita.
+        self._ensure_peer_from_context(request.username, context)
 
         return await self.resolve_move(request, context)
 
@@ -614,7 +682,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         my_addr = f"{self.node.host}:{self.node.grpc_port}"
         seen_addrs: set[str] = set()
         snapshot = list(self.node.peers.items())
-        for nid, p in snapshot: #broadcast to each peer in lobby
+        for nid, p in snapshot:
             addr = p.get("grpc_addr")
             if not addr or addr == my_addr or addr in seen_addrs:
                 continue

@@ -1,536 +1,457 @@
-import hashlib
-import json
-import time
+#GameNode — integra Kademlia, servidor gRPC do jogo e loop de input.
+
 import asyncio
-import random
+import time
+import sys
+import os
+import json
+import logging
+
+import grpc
+from kademlia.network import Server as KademliaNode
+import kademlia.node as kad_node
+from kademlia.utils import digest
 
 import game_pb2
+import game_pb2_grpc
 
-from dnd_classes import max_damage_for_class
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from dht_keys import addr_key, username_key, lobby_meta_key
 
-from lobby.lobby_repository import LobbyRepository
-from lobby.lobby_models import Lobby, LobbyMember, LobbySession
+from dnd_classes import DnDClass
+from game_state   import GameState, LocalPlayer, MatchPhase, MAP_W, MAP_H
+from game_servicer import GameServicer
+from renderer      import render_frame
+from input_reader  import InputReader
+from game.lobby.lobby_manager import LobbyManager
+from game.network.host_router import Router
+from game.network import network_handler
+from proto_helpers      import local_player_to_proto
+from combat_engine      import CombatEngine
+from command_dispatcher import CommandDispatcher
 from lobby.lobby_enums import LobbyStatus
 
-class LobbyManager:
-    def __init__(self, kad, node_id: str, username: str, peers: dict, send_fn, host, kad_port):
-        self.kad      = kad
-        self.username = username
-        self.peers    = peers
-        self._send    = send_fn 
-        self.send_rpc = send_fn
-        self.host = host
-        self.kad_port = kad_port    
-        self.session: LobbySession | None = None
-        self.known_lobbies: dict[str, tuple[Lobby, float]] = {}
-        self.repo = LobbyRepository(kad)
-        self._local_member: "LobbyMember | None" = None
+# Segundos de exibição do ecrã de fim antes de reiniciar
+_MATCH_END_PAUSE = 8
+
+
+class GameNode(Router):
+    def __init__(self, username: str, dnd_class: DnDClass,
+                 host: str, grpc_port: int, kad_port: int,
+                 bootstrap=None, match_id: str = ""):
+        self.username   = username
+        self.host       = host
+        self.grpc_port  = grpc_port
+        self.kad_port   = kad_port
+        self.bootstrap  = bootstrap
+
+        self.kad         = KademliaNode(ksize=20, alpha=3)
+        self.grpc_server = None
+        self.peers: dict = {}
+
+        local = LocalPlayer(
+            username=username,
+            node_id="",
+            dnd_class=dnd_class,
+            match_id=match_id,
+        )
+        self.state = GameState(local)
+        self.lobby = LobbyManager(
+            kad=self.kad,
+            node_id="",
+            username=username,
+            peers=self.peers,
+            send_fn=self.send_rpc,
+            host=self.host,
+            kad_port=self.kad_port,
+        )
+
+        self._reader = InputReader(prompt="> ")
+        self._combat = CombatEngine(
+            state=self.state,
+            peers=self.peers,
+            route_attack_fn=self.route_attack,
+        )
+        self._channels: dict[str, grpc.aio.Channel] = {}
+        self._stubs: dict[str, game_pb2_grpc.GameServiceStub] = {}
+        self._last_register = 0.0
+        self.lobby_started_event = asyncio.Event()
 
     def _dbg(self, msg: str):
-        role = "host" if self.is_host else "client"
-        print(f"[DBG][Lobby:{self.username}][{role}] {msg}")
+        role = "host" if (self.lobby and self.lobby.is_host) else "client"
+        print(f"[DBG][Node:{self.username}][{role}] {msg}")
 
     @property
     def node_id(self) -> str:
+        return self.kad.node.id.hex()
+
+    #---- KADEMLIA -------------------------------------------------
+
+    async def start_kademlia(self):
+        self._dbg(f"start_kademlia listen={self.kad_port} bootstrap={self.bootstrap}")
+        await network_handler.init_kad(self.kad, self.kad_port, bootstrap=self.bootstrap)
+        self.state.local.node_id = self.node_id
+        self._dbg(f"kademlia ready node_id={self.node_id[:8]}")
+
+
+    async def register_self(self, force: bool = False, min_interval: float = 10.0):
+        now = time.time()
+        if not force and (now - self._last_register) < min_interval:
+            return
+        self._dbg(f"register_self force={force} host={self.host} grpc={self.grpc_port}")
+        await network_handler.register_self(
+            self.kad,
+            self.node_id,
+            self.host,
+            self.grpc_port,
+            self.username,
+            self.peers,
+            self.state.local.dnd_class.name,
+        )
+        self._last_register = now
+        self._dbg(f"register_self done peers={len(self.peers)}")
+        
+
+    async def discover_peers(self):
+        candidates = await network_handler.find_neighbor_addrs(self.kad, self.host, self.kad_port)
+        self._dbg(f"discover_peers candidates={len(candidates)}")
+        for nid, addr in candidates:
+            if nid in self.peers:
+                continue
+            self._dbg(f"discover_peers new nid={nid[:8]} addr={addr}")
+            await self._handshake(addr, remote_node_id=nid)
+            await self._announce_join_to(addr)
+
+    async def _handshake(self, addr: str, remote_node_id: str = ""):
+        self._dbg(f"handshake start nid={remote_node_id[:8]} addr={addr}")
+        stub = await self.get_or_create_grpc_stub(addr)
+        await network_handler.handshake(addr, self.node_id, self.peers, remote_node_id, stub)
+        peer = self.peers.get(remote_node_id)
+        self._dbg(f"handshake done nid={remote_node_id[:8]} known={bool(peer)}")
+
+    async def _announce_join_to(self, addr: str):
+        self._dbg(f"announce_join_to START addr={addr}")
+        req = game_pb2.JoinRequest(
+            username=self.username,
+            class_name=self.state.local.dnd_class.name,
+            grpc_address=self.host,
+            port=self.grpc_port,
+        )
+        result = await self.send_rpc(addr, 'Join', req, timeout=5.0)
+        self._dbg(f"announce_join_to END addr={addr} result={result}")
+
+    # ── gRPC ──────────────────────────────────────────────────────
+
+    async def start_grpc_server(self):
+        self.grpc_server = grpc.aio.server()
+        game_pb2_grpc.add_GameServiceServicer_to_server(
+            GameServicer(self.state, self),
+            self.grpc_server,
+        )
+        self.grpc_server.add_insecure_port(f"0.0.0.0:{self.grpc_port}")
+        await self.grpc_server.start()
+        print(f"[gRPC] Servidor do jogo na porta {self.grpc_port}")
+
+    async def _send(self, addr: str, rpc_fn, request, timeout: float = 3.0):
         try:
-            return self.kad.node.id.hex()
-        except AttributeError:
-            return ""
-
-    def _generate_code(self) -> str:
-        raw = f"{self.node_id}{time.time()}"
-        return hashlib.sha256(raw.encode()).hexdigest()[:6].upper()
-    
-    def _make_member_info(self, grpc_addr: str = "") -> LobbyMember: 
-        return LobbyMember(node_id=self.node_id, username=self.username, grpc_addr=grpc_addr, ready=False)
-    
-    async def _gossip_lobby(self, lobby: Lobby):
-        if not self.peers:
-            return
-        
-        sample = random.sample(
-            list(self.peers.values()),
-            k=min(3, len(self.peers))   # não spamma a rede
-        )
-
-        msg = json.dumps(lobby.to_dict())
-
-        tasks = []
-        snapshot = list(sample) #to avoid race conditions
-        for p in snapshot:
-            if not p.get("grpc_addr"):
-                continue
-
-            tasks.append(
-                self.send_rpc(p["grpc_addr"], 'LobbyGossip', game_pb2.LobbyGossipMessage(payload=msg))
-            )
-
-        if tasks:
-            self._dbg(f"gossip lobby={lobby.code} targets={len(tasks)}")
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-
-    async def create(self, name: str, max_players: int, my_grpc_addr: str) -> str:
-        self._dbg(f"create name={name} max={max_players} my_addr={my_grpc_addr}")
-        code = self._generate_code()
-
-        lobby = Lobby(
-            code=code,
-            name=name,
-            owner=self.node_id,
-            host_addr=my_grpc_addr,
-            max_players=max_players,
-        )
-
-        member = self._make_member_info(grpc_addr=my_grpc_addr)
-
-        await self.repo.save_lobby(lobby)
-        await self.repo.save_member(code, member)
-        await self.repo.announce_lobby(code)
-        self._local_member = member 
-
-        lobby_info = {
-            "code": code, "name": name,
-            "max_players": max_players,
-            "current_players": 1,
-            "status": "open",
-            "host_addr": my_grpc_addr,
-        }
-
-        await self.repo.save_peer_lobby(self.node_id, lobby_info)
- 
-        self.session = LobbySession(
-            code = code, 
-            is_host = True, 
-            host_addr = my_grpc_addr, 
-            ready = False, 
-            lobby_state = lobby
-        )
-
-        lobby.source = self.node_id
-        await self._gossip_lobby(lobby)
- 
-        print(f"[Lobby] Lobby '{name}' criado com código \033[1m{code}\033[0m")
-        print(f"[Lobby] Partilha este código com os teus amigos.")
-        print(f"[Lobby] Juntando ao lobby...")
-        self._dbg(f"create done code={code} peers={len(self.peers)}")
-
-        return code
-
-
-    async def _probe_lobby_codes(self, candidates: set[str]) -> set[str]:
-        discovered = set()
-
-        for nid in candidates:
-            info = await self.repo.get_peer_lobby(nid)
-            if info:
-                code = info.get("code")
-                if code:
-                    discovered.add(code)
-
-        return discovered
-
-    async def list_open(self):
-        lobbies: dict[str, Lobby] = {}
-
-        # 1. gossip cache (rápido)
-        for code, (lobby, ts) in self.known_lobbies.items():
-            if time.time() - ts > 30:
-                continue
-            if lobby.status == LobbyStatus.OPEN:
-                lobbies[code] = lobby
-
-        dht_codes = await self._probe_lobby_codes(
-            set(self.peers.keys()) |
-            {lobby.owner for lobby, _ in self.known_lobbies.values() if lobby.owner}
-        )
-        pending_codes = set()
-        for code in dht_codes:
-            if code not in lobbies:
-                pending_codes.add(code)
-
-        for code in pending_codes:
-            lobby = await self.repo.get_lobby(code)
-            if not lobby:
-                lobbies.pop(code, None)
-                continue
-
-            if lobby.status != LobbyStatus.OPEN:
-                lobbies.pop(code, None)
-            else:
-                lobbies[code] = lobby
-
-
-        if not lobbies:
-            print("[Lobby] Nenhum lobby disponível.")
-            return
-
-        print("\n┌─ Lobbies abertos ─" + "─" * 40)
-        for l in lobbies.values():
-            print(f"│ [{l.code}] {l.name} — {l.max_players}")
-        print("└" + "─" * 50)
-
-
-    async def _count_members(self, code: str) -> int:
-        return len(await self._fetch_members(code))
-
-    async def _update_player_count(self, lobby: Lobby, count: int):
-        owner_id = lobby.owner
-        
-        if not owner_id:
-            return
-        
-        info = await self.repo.get_peer_lobby(owner_id)
-
-        if info:
-            info["current_players"] = count
-            await self.repo.save_peer_lobby(owner_id, info)
-
-    async def join(self, code: str, my_grpc_addr: str):
-        self._dbg(f"join code={code} my_addr={my_grpc_addr}")
-        if self.session:
-            print(f"[Lobby] Já estás no lobby {self.session.code}. Sai primeiro com /lobby leave.")
-            return
- 
-        lobby = await self.repo.get_lobby(code)
-        if not lobby:
-            print(f"[Lobby] Lobby '{code}' não encontrado na DHT.")
-            return
- 
-        if lobby.status != LobbyStatus.OPEN:
-            print(f"[Lobby] O lobby '{code}' já não está aberto ({lobby.status}).")
-            return
- 
-        member_count = await self._count_members(code)
-        if member_count >= lobby.max_players:
-            print(f"[Lobby] Lobby '{code}' está cheio ({member_count}/{lobby.max_players}).")
-            return
- 
-        member_info = self._make_member_info(grpc_addr=my_grpc_addr)
-        await self.repo.save_member(code, member_info)
-        self._local_member = member_info  # cache local
-        await self._notify_peers(code, game_pb2.LobbyNotification.PLAYER_JOINED)
- 
-        self.session = LobbySession(
-            code=code,
-            is_host=False,
-            host_addr=lobby.host_addr,
-            ready=False,
-            lobby_state=lobby
-        )
- 
-        print(f"[Lobby] Entraste no lobby \033[1m{code}\033[0m — {lobby.name}")
-        print(f"[Lobby] Usa /ready quando estiveres pronto.")
-        self._dbg(
-            f"join done code={code} host_addr={lobby.host_addr} members_before={member_count}"
-        )
- 
-        await self._update_player_count(lobby, member_count + 1)
-
-
-    async def _notify_peers(self, lobby_code: str, notify_type: int):
-        notification = game_pb2.LobbyNotification()
-        notification.type       = notify_type
-        notification.lobby_code = lobby_code
-        notification.username   = self.username
-        
-        tasks = [
-            self.send_rpc(p["grpc_addr"], 'LobbyNotify', notification)
-            for p in self.peers.values()
-            if p.get("grpc_addr")
-        ]
-
-        host_addr = self.host_addr if self.session else ""
-        if host_addr and all(p.get("grpc_addr") != host_addr for p in self.peers.values()):
-            tasks.append(self.send_rpc(host_addr, 'LobbyNotify', notification))
-
-        self._dbg(
-            f"notify type={notify_type} code={lobby_code} peers={len(self.peers)} targets={len(tasks)} "
-            f"host_addr={host_addr or '-'}"
-        )
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-
-    async def leave(self):
-        if not self.session:
-            print("[Lobby] Não estás em nenhum lobby.")
-            return
- 
-        code = self.session.code
-
-        await self._notify_peers(code, game_pb2.LobbyNotification.PLAYER_LEFT) 
-        await self.repo.remove_member(code, self.node_id)
-
-        if self.is_host:
-            lobby = await self.repo.get_lobby(code)
-            if lobby:
-                lobby.status = LobbyStatus.ABANDONED
-                lobby.version = time.time()
-                await self.repo.save_lobby(lobby)
-                await self._notify_peers(code, game_pb2.LobbyNotification.LOBBY_CLOSED)
-                print("[Lobby] Eras o host — o lobby foi encerrado.")
-                
-        else:
-            print(f"[Lobby] Saíste do lobby {code}.")
-
-        if self.session.lobby_state:
-            count = max(0, await self._count_members(code) - 1)
-            await self._update_player_count(self.session.lobby_state, count)
-
-        self.session.reset()
-
-
-    async def set_ready(self, ready: bool):
-        if not self.session:
-            print("[Lobby] Não estás em nenhum lobby.")
-            return
- 
-        self.session.ready = ready
-        member = await self.repo.get_member(self.session.code, self.node_id)
-
-        if member:
-            member.ready = ready
-            await self.repo.save_member(self.session.code, member)
-
-        if self._local_member:
-            self._local_member.ready = ready
- 
-        status = "\033[32mPRONTO\033[0m" if ready else "\033[33mNÃO PRONTO\033[0m"
-        print(f"[Lobby] Estás {status}")
-
-        notify_type = (game_pb2.LobbyNotification.PLAYER_READY if ready
-            else game_pb2.LobbyNotification.PLAYER_UNREADY)
-        
-        await self._notify_peers(self.session.code, notify_type)
-
-
-    async def _fetch_members(self, code: str) -> list[LobbyMember]:
-        candidate_ids = set(self.peers.keys()) | {self.node_id}
-        dht_members = await self.repo.list_members(code, candidate_ids)
-
-        if self._local_member and self._local_member.node_id == self.node_id:
-            dht_ids = {m.node_id for m in dht_members}
-            if self.node_id not in dht_ids:
-                dht_members = [self._local_member] + dht_members
-
-        self._dbg(
-            f"fetch_members code={code} candidates={len(candidate_ids)} found={len(dht_members)}"
-        )
-
-        return dht_members
-
-    
-    def _get_owner_id(self) -> str | None:
-        if not self.session: 
-            return None
-
-        if self.is_host:
-            return self.node_id
-        
-        if self.session.lobby_state:
-            return self.session.lobby_state.owner
-        
-        return None
-
-    
-    async def status(self):
-        if not self.session:
-            print("[Lobby] Não estás em nenhum lobby.")
-            return
-
-        self._dbg(f"status code={self.session.code}")
- 
-        members = await self._fetch_members(self.session.code)
-        if not members:
-            print("[Lobby] Lobby vazio ou não encontrado.")
-            return
- 
-        lobby = await self.repo.get_lobby(self.session.code)
-
-        if not lobby: 
-            print("[Lobby] Metadados do lobby não encontrados.")
-            return 
- 
-        print(f"\n┌─ Lobby [{self.session.code}] {lobby.name} " + "─" * 30)
-
-        all_ready = True
-
-        for m in members:
-            ready_icon = "\033[32m✔\033[0m" if m.ready else "\033[31m✘\033[0m"
-            host_tag   = " 👑" if m.node_id == self._get_owner_id() else ""
-
-            print(f"│  {ready_icon} {m.username}{host_tag}")
-
-            if not m.ready:
-                all_ready = False
-
-        print("└" + "─" * 50)
- 
-        if all_ready and len(members) > 1:
-            print("[Lobby] Todos prontos! O host pode usar /lobby start.")
-        
-    async def _notify_and_wait_start(self, timeout: float = 5.0):
-        notification = game_pb2.LobbyNotification()
-        notification.type       = game_pb2.LobbyNotification.LOBBY_STARTED
-        notification.lobby_code = self.session.code
-        notification.username   = self.username
-
-        peers_with_addr = [
-            p for p in self.peers.values() if p.get("grpc_addr")
-        ]
-
-        if not peers_with_addr:
-            self._dbg("notify_start no peers_with_addr")
-            return 
-
-        tasks = [
-            self.send_rpc(p["grpc_addr"], 'LobbyNotify', notification)
-            for p in peers_with_addr
-        ]
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        errors = [r for r in results if isinstance(r, Exception)]
-        if errors:
-            print(f"[Lobby] {len(errors)} peer(s) não responderam — a avançar na mesma.")
-        self._dbg(f"notify_start sent={len(tasks)} errors={len(errors)}")
-
-    async def start(self) -> bool:
-        if not self.session:
-            print("[Lobby] Não estás em nenhum lobby.")
-            return False
- 
-        if not self.is_host:
-            print("[Lobby] Só o dono do lobby pode iniciá-lo.")
-            return False
- 
-        lobby = await self.repo.get_lobby(self.session.code)
-        if lobby is None:
-            lobby = self.session.lobby_state
-            if lobby:
-                await self.repo.save_lobby(lobby)
-        if not lobby:
-            print("[Lobby] Metadados do lobby não encontrados.")
-            return False
- 
-        members = await self._fetch_members(self.session.code)
-        self._dbg(f"start requested members={len(members)}")
-        not_ready = [m.username for m in members
-                     if not m.ready and m.node_id != self.node_id]
-                     
-        if not_ready:
-            print(f"[Lobby] Ainda não estão prontos: {', '.join(not_ready)}")
-            print("[Lobby] Usa /lobby status para ver o estado de cada jogador.")
-            return False
- 
-        lobby.status = LobbyStatus.STARTED
-        lobby.version = time.time()
-        lobby.source = self.node_id
-
-        await self.repo.save_lobby(lobby)
-        await self._gossip_lobby(lobby)
-        await self._notify_and_wait_start()
-
-        print(f"\033[1m[Lobby] A iniciar o jogo! Boa sorte a todos.\033[0m")
-
-        return True
-
-    def validate_attack(self, attacker_class: str, damage: int,
-                        weapon: str, is_spell: bool) -> tuple[bool, str]:
-
-        max_dmg = max_damage_for_class(attacker_class)
-
-        if damage < 0:
-            return False, f"Dano negativo não permitido ({damage})."
-
-        if damage > max_dmg:
-            return False, (
-                f"Dano {damage} excede o máximo permitido para {attacker_class} "
-                f"({max_dmg}). Possível trapaça!"
-            )
-
-        return True, "ok"
-    
-    async def request_validation(self, attack_req: "game_pb2.AttackRequest") -> bool:
-        if not self.session or not self.host_addr:
-            print("[Lobby] Host desconhecido — ataque bloqueado por segurança.")
-            return False
- 
-        try:
-            val_req = game_pb2.ValidateAttackRequest(
-                attacker=attack_req.attacker,
-                attacker_class=attack_req.attacker_class,
-                weapon=attack_req.weapon,
-                damage=attack_req.base_damage_roll,
-                is_spell=attack_req.is_spell,
-                target=attack_req.target,
-            )
-            resp = await self.send_rpc(
-                self.host_addr,
-                'ValidateAttack',
-                val_req,
-                timeout=2.0,
-            )
-            if resp is None:
-                print("[Lobby] Host não respondeu à validação — ataque bloqueado.")
-                return False
-            if not resp.approved:
-                print(f"[Lobby] \033[31mAtaque rejeitado pelo host:\033[0m {resp.reason}")
-            return resp.approved
+            stub = await self.get_or_create_grpc_stub(addr)
+            if not stub:
+                self._dbg(f"send no stub addr={addr}")
+                return None
+            return await asyncio.wait_for(rpc_fn(stub, request), timeout=timeout)
         except Exception as e:
-            print(f"[Lobby] Erro de validação: {e}")
-            return False
+            self._dbg(f"send failed addr={addr} err={type(e).__name__}: {e}")
+            # on error, drop cached channel/stub so future attempts recreate
+            ch = self._channels.pop(addr, None)
+            if ch:
+                try:
+                    res = ch.close()
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception:
+                    pass
+            self._stubs.pop(addr, None)
+            return None
         
-    async def sync_loop(self, interval: float = 5.0):
-        while self.session:
-            await asyncio.sleep(interval)
-            if not self.session:
-                break
+    async def send_rpc(self, addr: str, rpc, request, timeout: float = 3.0):
+        #so the lambda isnt repeated everywhere
+        if isinstance(rpc, str):
+            rpc_name = rpc
+            rpc_fn = lambda s, r: getattr(s, rpc_name)(r)
+        else:
+            rpc_fn = rpc
 
-            try:
-                await self.refresh_lobby_state()
-                lobby = await self.repo.get_lobby(self.session.code)
+        return await self._send(addr, rpc_fn, request, timeout=timeout)
+    
+    
+    async def get_or_create_grpc_channel(self, addr: str = "") -> grpc.aio.Channel:
+        if not addr: return None
+            
 
-                if not lobby:
-                    continue
+        channel = self._channels.get(addr)
+        if channel: return channel
+            
 
+        channel = grpc.aio.insecure_channel(addr)
+        self._channels[addr] = channel
+        self._dbg(f"new grpc channel addr={addr}")
+        return channel
+
+    async def get_or_create_grpc_stub(self, addr: str = "") -> game_pb2_grpc.GameServiceStub:
+        if not addr: return None
+
+        stub = self._stubs.get(addr)
+        if stub: return stub
+            
+        ch = await self.get_or_create_grpc_channel(addr)
+        if not ch: return None
+            
+        stub = game_pb2_grpc.GameServiceStub(ch)
+        self._stubs[addr] = stub
+        self._dbg(f"new grpc stub addr={addr}")
+        return stub
+        
+
+
+
+    #--- BROADCAST ----------------------------------------------
+
+    async def broadcast_state(self):
+        lp = self.state.local
+        lp.tick_effects()   # limpa efeitos expirados antes de enviar
+        pb = local_player_to_proto(lp, self.state.match_id)
+        peers_snapshot = list(self.peers.items()) #to avoid race conditions
+        host_addr = self.lobby.host_addr if self.lobby and not self.lobby.is_host else ""
+        my_addr = f"{self.host}:{self.grpc_port}"
+        seen_addrs: set[str] = set()
+        tasks = []
+        for nid, p in peers_snapshot:
+            addr = p.get("grpc_addr")
+            if not addr or addr == my_addr or addr in seen_addrs:
+                continue
+            seen_addrs.add(addr)
+            tasks.append(self.send_rpc(addr, 'StateUpdate', pb))
+        if host_addr and host_addr not in seen_addrs:
+            tasks.append(self.send_rpc(host_addr, 'StateUpdate', pb))
+        self._dbg(
+            f"broadcast_state targets={len(tasks)} peers={len(peers_snapshot)} "
+            f"host_fallback={bool(host_addr)} pos=({lp.x},{lp.y})"
+        )
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def announce_join(self):
+        self._dbg(f"announce_join START")
+        peers_snapshot = list(self.peers.items())
+        host_addr = self.lobby.host_addr if self.lobby and not self.lobby.is_host else ""
+        self._dbg(f"announce_join peer_snapshot={len(peers_snapshot)} host_addr={host_addr or '-'}")
+        tasks = [
+            self._announce_join_to(p["grpc_addr"])
+            for nid, p in peers_snapshot
+            if nid != self.node_id
+        ]
+        self._dbg(f"announce_join tasks_from_peers={len(tasks)}")
+        if host_addr and all(p.get("grpc_addr") != host_addr for _, p in peers_snapshot):
+            self._dbg(f"announce_join host_fallback={host_addr}")
+            tasks.append(self._announce_join_to(host_addr))
+        self._dbg(
+            f"announce_join END targets={len(tasks)} peers={len(peers_snapshot)} "
+            f"host_fallback={bool(host_addr)}"
+        )
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+    #---- MOVIMENTO -----------------------------------------------
+
+    async def move(self, dx: int, dy: int):
+        lp    = self.state.local
+        new_x  = max(0, min(MAP_W - 1, lp.x + dx))
+        new_y  = max(0, min(MAP_H - 1, lp.y + dy))
+        self._dbg(f"move request from=({lp.x},{lp.y}) to=({new_x},{new_y})")
+        await self.route_move(game_pb2.MoveRequest(username = self.username,x = new_x,y = new_y))
+
+
+    #---- RENDER LOOP ----------------------------------------------
+
+    async def _render_loop(self):
+        while True:
+            render_frame(
+                self.state,
+                clear=True,
+                input_line=self._reader.prompt_line,
+            )
+            if self._reader.input_event:
+                try:
+                    await asyncio.wait_for(
+                        self._reader.input_event.wait(),
+                        timeout=1/30,
+                    )
+                    self._reader.input_event.clear()
+                except asyncio.TimeoutError:
+                    pass
+            else:
+                await asyncio.sleep(1)
+
+    #---- INPUT LOOP --------------------------------------------------
+
+    async def _lobby_sync_loop(self):
+        """
+        Corre em background e monitoriza o estado do lobby na DHT.
+        Quando o host muda para 'started', activa a fase ACTIVE.
+        """
+        while True:
+            await asyncio.sleep(3)
+            if not self.lobby.session:
+                continue
+            lobby = await self.lobby.repo.get_lobby(self.lobby.session.code)
+            if lobby: 
                 if lobby.status == LobbyStatus.STARTED:
-                    print("\n\033[1m[Lobby] O host iniciou o jogo! A entrar…\033[0m")
-                    self.session.reset()
-                    return lobby.code
-                
-                if lobby.status == LobbyStatus.ABANDONED:
-                    print("\n[Lobby] O host saiu — lobby encerrado.")
-                    self.session.reset()
-                    return None
-                
+                    if self.state.phase != MatchPhase.ACTIVE:
+                        self.state.phase = MatchPhase.ACTIVE
+                        self.state.log_event("🎮 O host iniciou o jogo!")
+                elif lobby.status == LobbyStatus.ABANDONED:
+                    self.lobby.session.reset()
+                    self.state.log_event("[Lobby] O host saiu — lobby encerrado.")
+
+    async def input_loop(self):
+        """Loop de input durante a partida."""
+        print("\n[Jogo] A entrar na partida…")
+        self._dbg(f"input_loop START peers={len(self.peers)} is_host={self.lobby.is_host if self.lobby else '?'}")
+        await self.announce_join()
+
+        x, y = self.state.random_spawn()
+        self.state.local.x, self.state.local.y = x, y
+
+        if self.state.phase != MatchPhase.ACTIVE:
+            self.state.phase      = MatchPhase.ACTIVE
+            self.state.start_time = time.time()
+            self.state.match_id   = self.state.local.match_id
+            await self._broadcast_event(game_pb2.GameEvent.MATCH_STARTED)
+
+        await self.broadcast_state()
+        self._dbg("input_loop initial state broadcast done")
+
+        self._reader.start()
+        render_task = asyncio.create_task(self._render_loop())
+        sync_task   = asyncio.create_task(self._lobby_sync_loop())
+        dispatcher  = CommandDispatcher(self)
+
+        try:
+            while True:
+                try:
+                    text = await self._reader.readline()
+                except (KeyboardInterrupt, EOFError):
+                    break
+                if not await dispatcher.dispatch(text):
+                    break
+        finally:
+            render_task.cancel()
+            sync_task.cancel()
+            self._reader.stop()
+
+
+    #---- MATCH END / RESET --------------------------------------------
+
+    async def _broadcast_event(self, event_type, payload: str = ""):
+        event = game_pb2.GameEvent(
+            type=event_type,
+            payload=payload,
+            timestamp=int(time.time()),
+            match_id=self.state.match_id,
+            event_author=self.username,
+        )
+        peers_snapshot = list(self.peers.items())
+        tasks = [
+            self.send_rpc(p["grpc_addr"], 'BroadcastEvent', event)
+            for nid, p in peers_snapshot
+            if nid != self.node_id
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _handle_match_end(self):
+        sb     = self.state.scoreboard()
+        winner = sb[0][0] if sb else "ninguém"
+
+        # Mostrar resultado
+        self.state.log_event("━" * 30)
+        self.state.log_event(f"🏆 FIM DE JOGO!  Vencedor: {winner}")
+        for uname, k, d in sb:
+            self.state.log_event(f"   {uname}: {k}K / {d}D")
+        self.state.log_event(f"🔄 Nova partida em {_MATCH_END_PAUSE}s…")
+        self.state.log_event("━" * 30)
+
+        await self._broadcast_event(game_pb2.GameEvent.MATCH_ENDED, winner)
+        await asyncio.sleep(_MATCH_END_PAUSE)
+        await self._reset_match()
+
+    async def _reset_match(self):
+        """Repõe todos os jogadores e inicia nova partida."""
+        x, y = self.state.random_spawn()
+        self.state.local.reset_for_new_match(x, y)
+        self.state.reset_others_for_new_match()
+        self.state.phase      = MatchPhase.ACTIVE
+        self.state.start_time = time.time()
+
+        self.state.log_event("🔄 Nova partida iniciada!")
+        await self._broadcast_event(game_pb2.GameEvent.MATCH_RESET)
+        await self.broadcast_state()
+
+    #--- REFRESH LOOP --------------------------------------------
+
+    async def _refresh_loop(self):
+        while True:
+            try:
+                await self.register_self()
+                await self.discover_peers()
+                await self.broadcast_state()
+
+                # Verificar fim de partida (apenas se ACTIVE para não re-trigger)
+                if self.state.phase == MatchPhase.ACTIVE and self.state.check_match_end():
+                    self.state.phase = MatchPhase.ENDED   # bloqueia re-trigger
+                    asyncio.create_task(self._handle_match_end())
+
+            except Exception as e:
+                self._dbg(f"refresh_loop error {type(e).__name__}: {e}")
+            await asyncio.sleep(0.5)
+            
+            
+
+    #---- ARRANQUE -------------------------------------------
+
+    async def run(self):
+        logging.getLogger("kademlia").setLevel(logging.ERROR)
+        self._dbg("run start")
+
+        await self.start_kademlia()
+        await self.start_grpc_server()
+        await self.register_self(force=True)
+        asyncio.create_task(self._refresh_loop())
+        await self.input_loop()
+
+        leave_req = game_pb2.LeaveNotification(username=self.username)
+        peers_snapshot = list(self.peers.items())
+        tasks = [
+            self.send_rpc(p["grpc_addr"], 'Leave', leave_req)
+            for nid, p in peers_snapshot
+            if nid != self.node_id
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        if self.grpc_server:
+            await self.grpc_server.stop(grace=2)
+        # close pooled channels
+        for ch in list(self._channels.values()):
+            try:
+                res = ch.close()
+                if asyncio.iscoroutine(res):
+                    await res
             except Exception:
                 pass
+        self._channels.clear()
+        self._stubs.clear()
+        self._dbg("run stop")
 
-        return None
-    
-    async def refresh_lobby_state(self):
-        if not self.session:
-            return
-
-        lobby = await self.repo.get_lobby(self.session.code)
-        
-        if lobby:
-            self.session.lobby_state = lobby
-    @property
-    def is_host(self) -> bool:
-        return bool(self.session and self.session.is_host)
-    
-    @property
-    def host_addr(self) -> str:
-        return self.session.host_addr if self.session else ""
-
-    def peer_is_host(self, peer) -> bool:
-        if not isinstance(peer, dict):
-            return False
-        owner = self._get_owner_id()
-        if not owner:
-            return False
-        return peer.get("node_id") == owner or peer.get("grpc_addr") == self.host_addr
+        print("\n[Jogo] Saíste. Até à próxima!")
