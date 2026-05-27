@@ -347,6 +347,34 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             return getattr(player, "grpc_addr", None)
         
         return None
+
+    def _ensure_remote_player_from_peers(self, username: str):
+        for nid, p in self.node.peers.items():
+            if p.get("username") != username:
+                continue
+
+            existing = self.state.others.get(username)
+            if existing:
+                return existing
+
+            remote = RemotePlayer(
+                username=username,
+                node_id=p.get("node_id") or nid,
+                grpc_addr=p.get("grpc_addr") or "",
+                hp=1,
+                max_hp=1,
+                x=0,
+                y=0,
+                alive=True,
+                class_name=p.get("class_name") or "",
+                armor_class=0,
+                kills=0,
+                deaths=0,
+            )
+            self.state.others[username] = remote
+            return remote
+
+        return None
     
     def _verify_sender_ip(self, context, username: str) -> bool:
         return True
@@ -574,8 +602,11 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         user, userIsHost = self._lookup_player(username)
 
         if user is None:
-            self.state.log_event(f"[Host] Move de desconhecido '{username}' — rejeitado.")
-            return game_pb2.MoveResult(applied=False)
+            user = self._ensure_remote_player_from_peers(username)
+            userIsHost = False
+            if user is None:
+                self.state.log_event(f"[Host] Move de desconhecido '{username}' — rejeitado.")
+                return game_pb2.MoveResult(applied=False)
 
         if userIsHost:
             ux, uy = state.local.x, state.local.y
