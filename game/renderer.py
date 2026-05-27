@@ -53,7 +53,7 @@ def render_map(state: GameState) -> str:
         symbol = f"{BOLD}{CYAN}☺ {RESET}" if lp.alive else f"{RED}✝ {RESET}"
         grid[lp.y][lp.x] = symbol
 
-    border_h = "-" * (MAP_W * 2 + 2)
+    border_h = "─" * (MAP_W * 2 + 2)
     lines = [f"┌{border_h}┐"]
     for row in grid:
         lines.append("│ " + "".join(row) + " │")
@@ -111,7 +111,7 @@ def render_frame(
     }[state.phase]
 
     timer  = render_timer(state) if state.phase == MatchPhase.ACTIVE else ""
-    header = f"{BOLD}{YELLOW}{'-'*10} {phase_label} {timer} {'-'*10}{RESET}"
+    header = f"{BOLD}{YELLOW}{'─'*10} {phase_label} {timer} {'─'*10}{RESET}"
     parts.append(header)
 
     parts.append(render_map(state))
