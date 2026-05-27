@@ -196,16 +196,25 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     # -- STATE UPDATE ----------------------------------------------
 
     async def StateUpdate(self, request, context):
-        peer = context.peer() 
-        
-        host_addr = self.node.lobby.host_addr  
-        if host_addr:
-            peer_ip = peer.split(":")[1] if peer.startswith("ipv4:") else None
-            host_ip = host_addr.split(":")[0]
-            
-            if peer_ip and peer_ip != host_ip:
-                return game_pb2.Ack(received=False, by=self.state.local.username)
-        
+        host_addr = self.node.lobby.host_addr
+
+        # Host (ou sem lobby): aceita state de qualquer peer conhecido.
+        # O host precisa de receber o state inicial dos não-hosts para ter
+        # os valores corretos de HP/max_hp antes de resolver ataques.
+        if not host_addr or self.node.lobby.is_host:
+            self.state.update_remote(request)
+            return game_pb2.Ack(received=True, by=self.state.local.username)
+
+        # Não-host num lobby: só aceita actualizações vindas do host.
+        # O host é a fonte autoritativa de verdade; updates directos entre
+        # peers não-host seriam inconsistentes com o estado resolvido pelo host.
+        peer = context.peer()
+        peer_ip = peer.split(":")[1] if peer.startswith("ipv4:") else None
+        host_ip = host_addr.split(":")[0]
+
+        if peer_ip and peer_ip != host_ip:
+            return game_pb2.Ack(received=False, by=self.state.local.username)
+
         self.state.update_remote(request)
         return game_pb2.Ack(received=True, by=self.state.local.username)
     
