@@ -130,14 +130,15 @@ class GameNode(Router):
         self._dbg(f"handshake done nid={remote_node_id[:8]} known={bool(peer)}")
 
     async def _announce_join_to(self, addr: str):
+        self._dbg(f"announce_join_to START addr={addr}")
         req = game_pb2.JoinRequest(
             username=self.username,
             class_name=self.state.local.dnd_class.name,
             grpc_address=self.host,
             port=self.grpc_port,
         )
-        self._dbg(f"announce_join_to addr={addr}")
-        await self.send_rpc(addr, 'Join', req)
+        result = await self.send_rpc(addr, 'Join', req)
+        self._dbg(f"announce_join_to END addr={addr} result={result}")
 
     # ── gRPC ──────────────────────────────────────────────────────
 
@@ -236,17 +237,21 @@ class GameNode(Router):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def announce_join(self):
+        self._dbg(f"announce_join START")
         peers_snapshot = list(self.peers.items())
         host_addr = self.lobby.host_addr if self.lobby and not self.lobby.is_host else ""
+        self._dbg(f"announce_join peer_snapshot={len(peers_snapshot)} host_addr={host_addr or '-'}")
         tasks = [
             self._announce_join_to(p["grpc_addr"])
             for nid, p in peers_snapshot
             if nid != self.node_id
         ]
+        self._dbg(f"announce_join tasks_from_peers={len(tasks)}")
         if host_addr and all(p.get("grpc_addr") != host_addr for _, p in peers_snapshot):
+            self._dbg(f"announce_join host_fallback={host_addr}")
             tasks.append(self._announce_join_to(host_addr))
         self._dbg(
-            f"announce_join targets={len(tasks)} peers={len(peers_snapshot)} "
+            f"announce_join END targets={len(tasks)} peers={len(peers_snapshot)} "
             f"host_fallback={bool(host_addr)}"
         )
         if tasks:
@@ -308,7 +313,7 @@ class GameNode(Router):
     async def input_loop(self):
         """Loop de input durante a partida."""
         print("\n[Jogo] A entrar na partida…")
-        self._dbg("input_loop start")
+        self._dbg(f"input_loop START peers={len(self.peers)} is_host={self.lobby.is_host if self.lobby else '?'}")
         await self.announce_join()
 
         x, y = self.state.random_spawn()
