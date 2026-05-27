@@ -89,28 +89,6 @@ class GameNode(Router):
 
     async def start_kademlia(self):
         self._dbg(f"start_kademlia listen={self.kad_port} bootstrap={self.bootstrap}")
-        # install a loop exception handler to silence noisy InvalidStateError
-        # coming from third-party RPC/UDP tasks (rpcudp) which otherwise
-        # surface as "Task exception was never retrieved" in logs.
-        try:
-            loop = asyncio.get_running_loop()
-            def _kad_exc_handler(loop, context):
-                exc = context.get("exception")
-                if isinstance(exc, asyncio.InvalidStateError):
-                    # noisy double-set_result from rpcudp — warn and ignore
-                    self._dbg(f"ignored loop InvalidStateError: {exc}")
-                    return
-                # delegate other exceptions to default handler
-                if hasattr(loop, 'default_exception_handler'):
-                    loop.default_exception_handler(context)
-                else:
-                    # fallback: print context
-                    self._dbg(f"unhandled loop exception: {context}")
-            loop.set_exception_handler(_kad_exc_handler)
-        except Exception:
-            # if handler installation fails, continue — this is non-fatal
-            pass
-
         await network_handler.init_kad(self.kad, self.kad_port, bootstrap=self.bootstrap)
         self.state.local.node_id = self.node_id
         self._dbg(f"kademlia ready node_id={self.node_id[:8]}")
@@ -193,65 +171,7 @@ class GameNode(Router):
                 except Exception:
                     pass
             self._stubs.pop(addr, None)
-        # on repeated send failures, refresh peer grpc_addr from DHT and retry once
-        for attempt in range(1, 2 + 1):
-            try:
-                return await asyncio.wait_for(rpc_fn(stub, request), timeout=timeout)
-            except Exception as e:
-                last_exc = e
-                err_name = type(e).__name__
-                # log attempt
-                self._dbg(f"send failed addr={addr} attempt={attempt}/{2} err={err_name}: {e}")
-                # if final attempt, drop cached channel/stub so future attempts recreate
-                if attempt == 2:
-                    # Try to refresh grpc_addr from DHT if we can match this addr to a known peer
-                    try:
-                        # find node id for this addr
-                        nid = None
-                        for k, p in list(self.peers.items()):
-                            if p.get("grpc_addr") == addr:
-                                nid = k
-                                break
-                        if nid and hasattr(self, 'kad') and self.kad:
-                            try:
-                                from dht_keys import addr_key as _addr_key
-                                new_addr = await asyncio.wait_for(self.kad.get(_addr_key(nid)), timeout=2.0)
-                                if new_addr and new_addr != addr:
-                                    self._dbg(f"_send: refreshed addr from DHT nid={nid[:8]} old={addr} new={new_addr}")
-                                    # update peers and retry once with new addr
-                                    self.peers[nid]["grpc_addr"] = new_addr
-                                    # drop old cached channel/stub for old addr
-                                    ch = self._channels.pop(addr, None)
-                                    if ch:
-                                        try:
-                                            res = ch.close()
-                                            if asyncio.iscoroutine(res):
-                                                await res
-                                        except Exception:
-                                            pass
-                                    self._stubs.pop(addr, None)
-                                    # try sending once to new addr
-                                    stub = await self.get_or_create_grpc_stub(new_addr)
-                                    if stub:
-                                        try:
-                                            return await asyncio.wait_for(rpc_fn(stub, request), timeout=timeout)
-                                        except Exception as e2:
-                                            self._dbg(f"_send retry to refreshed addr failed err={type(e2).__name__}: {e2}")
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    # final cleanup: drop cached channel/stub so future attempts recreate
-                    ch = self._channels.pop(addr, None)
-                    if ch:
-                        try:
-                            res = ch.close()
-                            if asyncio.iscoroutine(res):
-                                await res
-                        except Exception:
-                            pass
-                    self._stubs.pop(addr, None)
-                    return None
+            return None
         
     async def send_rpc(self, addr: str, rpc, request, timeout: float = 3.0):
         #so the lambda isnt repeated everywhere
