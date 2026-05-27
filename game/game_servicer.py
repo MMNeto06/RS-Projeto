@@ -6,6 +6,7 @@ Implementação dos métodos gRPC definidos no game.proto.
 import time
 import asyncio
 import json
+import re
 
 import game_pb2
 import game_pb2_grpc
@@ -24,15 +25,31 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         self.node  = node
 
     def _lookup_player(self, username: str) -> tuple:
-        """
-        Devolve (player_obj, is_local) para um username.
-        player_obj é LocalPlayer se is_local=True, RemotePlayer caso contrário.
-        Devolve (None, False) se o jogador não for encontrado.
-        """
-        if username == self.state.local.username:
+        if username.lower() == self.state.local.username.lower():
             return self.state.local, True
-        player = self.state.others.get(username)
+        player = next(
+            (p for p in self.state.others.values()
+            if p.username.lower() == username.lower()),
+            None
+        )
         return player, False
+
+    def _extract_ip(peer_str: str) -> str | None:
+        """Extrai IP de strings gRPC como 'ipv4:1.2.3.4:PORT' ou 'ipv6:[::1]:PORT'."""
+        # ipv4:A.B.C.D:PORT
+        m = re.match(r"ipv4:(\d+\.\d+\.\d+\.\d+):\d+", peer_str)
+        if m:
+            return m.group(1)
+        # ipv6:[ADDR]:PORT  (inclui IPv4-mapped ::ffff:A.B.C.D)
+        m = re.match(r"ipv6:\[([^\]]+)\]:\d+", peer_str)
+        if m:
+            addr = m.group(1)
+            # IPv4-mapped IPv6: ::ffff:A.B.C.D
+            mapped = re.match(r"::ffff:(\d+\.\d+\.\d+\.\d+)$", addr, re.IGNORECASE)
+            if mapped:
+                return mapped.group(1)
+            return addr
+        return None
 
     # -- CHAT ------------------------------------------------------
 
@@ -52,20 +69,27 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     # -- JOIN ------------------------------------------------------
 
     async def Join(self, request, context):
-        self.state.log_event(
-            f"\033[32m{request.username}\033[0m ({request.class_name}) entrou no jogo."
-        )
         nid = request.username
-        if nid not in self.state.others:
+        grpc_addr = f"{request.grpc_address}:{request.port}"
+        existing = self.state.others.get(nid)
+        if existing is None:
             self.state.others[nid] = RemotePlayer(
                 username=request.username,
                 node_id=nid,
-                grpc_addr=f"{request.grpc_address}:{request.port}",
+                grpc_addr=grpc_addr,
                 hp=0, max_hp=0, x=0, y=0,
                 alive=True,
                 class_name=request.class_name,
                 armor_class=0, kills=0, deaths=0,
             )
+        else:
+            # Sempre actualiza o grpc_addr — pode ter chegado vazio via StateUpdate
+            existing.grpc_addr = grpc_addr
+            if request.class_name:
+                existing.class_name = request.class_name
+        self.state.log_event(
+            f"\033[32m{request.username}\033[0m ({request.class_name}) entrou no jogo."
+        )
         return game_pb2.Ack(received=True, by=self.state.local.username)
 
     # -- LEAVE -----------------------------------------------------
@@ -198,21 +222,14 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     async def StateUpdate(self, request, context):
         host_addr = self.node.lobby.host_addr
 
-        # Host (ou sem lobby): aceita state de qualquer peer conhecido.
-        # O host precisa de receber o state inicial dos não-hosts para ter
-        # os valores corretos de HP/max_hp antes de resolver ataques.
         if not host_addr or self.node.lobby.is_host:
             self.state.update_remote(request)
             return game_pb2.Ack(received=True, by=self.state.local.username)
 
-        # Não-host num lobby: só aceita actualizações vindas do host.
-        # O host é a fonte autoritativa de verdade; updates directos entre
-        # peers não-host seriam inconsistentes com o estado resolvido pelo host.
-        peer = context.peer()
-        peer_ip = peer.split(":")[1] if peer.startswith("ipv4:") else None
-        host_ip = host_addr.split(":")[0]
+        peer_ip  = _extract_ip(context.peer())
+        host_ip  = host_addr.split(":")[0]
 
-        if peer_ip and peer_ip != host_ip:
+        if peer_ip is not None and peer_ip != host_ip:
             return game_pb2.Ack(received=False, by=self.state.local.username)
 
         self.state.update_remote(request)

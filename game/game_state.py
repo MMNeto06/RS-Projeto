@@ -244,7 +244,7 @@ class GameState:
         self.others[key] = RemotePlayer(
             username=pb_state.username,
             node_id=existing.node_id if existing else "",
-            grpc_addr=existing.grpc_addr if existing else "",
+            grpc_addr=existing.grpc_addr if existing else "",   # preservar — Join é quem actualiza
             hp=pb_state.hp,
             max_hp=pb_state.max_hp,
             x=pb_state.x,
