@@ -23,9 +23,9 @@ from game_state   import GameState, LocalPlayer, MatchPhase, MAP_W, MAP_H
 from game_servicer import GameServicer
 from renderer      import render_frame
 from input_reader  import InputReader
-from lobby.lobby_manager import LobbyManager
-from network.host_router import Router
-from network import network_handler
+from game.lobby.lobby_manager import LobbyManager
+from game.network.host_router import Router
+from game.network import network_handler
 from proto_helpers      import local_player_to_proto
 from combat_engine      import CombatEngine
 from command_dispatcher import CommandDispatcher
