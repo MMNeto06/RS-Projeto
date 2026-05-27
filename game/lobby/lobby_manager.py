@@ -226,10 +226,6 @@ class LobbyManager:
             if p.get("grpc_addr")
         ]
 
-        host_addr = self.host_addr if self.session else ""
-        if host_addr and all(p.get("grpc_addr") != host_addr for p in self.peers.values()):
-            tasks.append(self.send_rpc(host_addr, 'LobbyNotify', notification))
-
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 

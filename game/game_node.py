@@ -202,27 +202,21 @@ class GameNode(Router):
         lp.tick_effects()   # limpa efeitos expirados antes de enviar
         pb = local_player_to_proto(lp, self.state.match_id)
         peers_snapshot = list(self.peers.items()) #to avoid race conditions
-        host_addr = self.lobby.host_addr if self.lobby and not self.lobby.is_host else ""
         tasks = [
             self.send_rpc(p["grpc_addr"], 'StateUpdate', pb)
             for nid, p in peers_snapshot
             if nid != self.node_id
         ]
-        if host_addr and all(p.get("grpc_addr") != host_addr for _, p in peers_snapshot):
-            tasks.append(self.send_rpc(host_addr, 'StateUpdate', pb))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def announce_join(self):
         peers_snapshot = list(self.peers.items())
-        host_addr = self.lobby.host_addr if self.lobby and not self.lobby.is_host else ""
         tasks = [
             self._announce_join_to(p["grpc_addr"])
             for nid, p in peers_snapshot
             if nid != self.node_id
         ]
-        if host_addr and all(p.get("grpc_addr") != host_addr for _, p in peers_snapshot):
-            tasks.append(self._announce_join_to(host_addr))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
