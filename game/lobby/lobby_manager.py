@@ -26,6 +26,10 @@ class LobbyManager:
         self.repo = LobbyRepository(kad)
         self._local_member: "LobbyMember | None" = None
 
+    def _dbg(self, msg: str):
+        role = "host" if self.is_host else "client"
+        print(f"[DBG][Lobby:{self.username}][{role}] {msg}")
+
     @property
     def node_id(self) -> str:
         try:
@@ -62,10 +66,12 @@ class LobbyManager:
             )
 
         if tasks:
+            self._dbg(f"gossip lobby={lobby.code} targets={len(tasks)}")
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
     async def create(self, name: str, max_players: int, my_grpc_addr: str) -> str:
+        self._dbg(f"create name={name} max={max_players} my_addr={my_grpc_addr}")
         code = self._generate_code()
 
         lobby = Lobby(
@@ -107,6 +113,7 @@ class LobbyManager:
         print(f"[Lobby] Lobby '{name}' criado com código \033[1m{code}\033[0m")
         print(f"[Lobby] Partilha este código com os teus amigos.")
         print(f"[Lobby] Juntando ao lobby...")
+        self._dbg(f"create done code={code} peers={len(self.peers)}")
 
         return code
 
@@ -177,6 +184,7 @@ class LobbyManager:
             await self.repo.save_peer_lobby(owner_id, info)
 
     async def join(self, code: str, my_grpc_addr: str):
+        self._dbg(f"join code={code} my_addr={my_grpc_addr}")
         if self.session:
             print(f"[Lobby] Já estás no lobby {self.session.code}. Sai primeiro com /lobby leave.")
             return
@@ -210,6 +218,9 @@ class LobbyManager:
  
         print(f"[Lobby] Entraste no lobby \033[1m{code}\033[0m — {lobby.name}")
         print(f"[Lobby] Usa /ready quando estiveres pronto.")
+        self._dbg(
+            f"join done code={code} host_addr={lobby.host_addr} members_before={member_count}"
+        )
  
         await self._update_player_count(lobby, member_count + 1)
 
@@ -229,6 +240,11 @@ class LobbyManager:
         host_addr = self.host_addr if self.session else ""
         if host_addr and all(p.get("grpc_addr") != host_addr for p in self.peers.values()):
             tasks.append(self.send_rpc(host_addr, 'LobbyNotify', notification))
+
+        self._dbg(
+            f"notify type={notify_type} code={lobby_code} peers={len(self.peers)} targets={len(tasks)} "
+            f"host_addr={host_addr or '-'}"
+        )
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -296,6 +312,10 @@ class LobbyManager:
             if self.node_id not in dht_ids:
                 dht_members = [self._local_member] + dht_members
 
+        self._dbg(
+            f"fetch_members code={code} candidates={len(candidate_ids)} found={len(dht_members)}"
+        )
+
         return dht_members
 
     
@@ -316,6 +336,8 @@ class LobbyManager:
         if not self.session:
             print("[Lobby] Não estás em nenhum lobby.")
             return
+
+        self._dbg(f"status code={self.session.code}")
  
         members = await self._fetch_members(self.session.code)
         if not members:
@@ -357,6 +379,7 @@ class LobbyManager:
         ]
 
         if not peers_with_addr:
+            self._dbg("notify_start no peers_with_addr")
             return 
 
         tasks = [
@@ -369,6 +392,7 @@ class LobbyManager:
         errors = [r for r in results if isinstance(r, Exception)]
         if errors:
             print(f"[Lobby] {len(errors)} peer(s) não responderam — a avançar na mesma.")
+        self._dbg(f"notify_start sent={len(tasks)} errors={len(errors)}")
 
     async def start(self) -> bool:
         if not self.session:
@@ -389,6 +413,7 @@ class LobbyManager:
             return False
  
         members = await self._fetch_members(self.session.code)
+        self._dbg(f"start requested members={len(members)}")
         not_ready = [m.username for m in members
                      if not m.ready and m.node_id != self.node_id]
                      
