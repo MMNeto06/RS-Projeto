@@ -24,10 +24,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         self.state = state
         self.node  = node
 
-    def _dbg(self, msg: str):
-        role = "host" if self.node.lobby.is_host else "client"
-        print(f"[DBG][Svc:{self.state.local.username}][{role}] {msg}")
-
     def _lookup_player(self, username: str) -> tuple:
         if username.lower() == self.state.local.username.lower():
             return self.state.local, True
@@ -76,7 +72,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     async def Join(self, request, context):
         import time as _time
         grpc_addr = f"{request.grpc_address}:{request.port}"
-        self._dbg(f"Join recv username={request.username} addr={grpc_addr} peer={context.peer()}")
 
         # Procurar entrada existente pelo username (case-insensitive)
         existing_key = next(
@@ -123,7 +118,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         self.state.log_event(
             f"\033[32m{request.username}\033[0m ({request.class_name}) entrou no jogo."
         )
-        self._dbg(f"Join applied others={len(self.state.others)} peers={len(self.node.peers)}")
         return game_pb2.Ack(received=True, by=self.state.local.username)
 
     # -- LEAVE -----------------------------------------------------
@@ -255,21 +249,15 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
     async def StateUpdate(self, request, context):
         host_addr = self.node.lobby.host_addr
-        peer = context.peer()
-        self._dbg(
-            f"StateUpdate recv from={request.username} peer={peer} host_addr={host_addr or '-'}"
-        )
 
         # Se somos o host, aceitar StateUpdate de qualquer peer (são broadcasts de estado)
         if self.node.lobby.is_host:
             self.state.update_remote(request)
-            self._dbg("StateUpdate accepted (we are host)")
             return game_pb2.Ack(received=True, by=self.state.local.username)
 
         # Sem lobby activo: aceitar de todos
         if not host_addr:
             self.state.update_remote(request)
-            self._dbg("StateUpdate accepted (no host_addr)")
             return game_pb2.Ack(received=True, by=self.state.local.username)
 
         # Em lobby como não-host: aceitar updates do host E updates do próprio jogador
@@ -281,7 +269,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         # Aceitar se vier do host OU se o IP não for determinável (segurança network edge)
         if peer_ip is None or peer_ip == host_ip:
             self.state.update_remote(request)
-            self._dbg(f"StateUpdate accepted by host-ip rule peer_ip={peer_ip} host_ip={host_ip}")
             return game_pb2.Ack(received=True, by=self.state.local.username)
 
         # Aceitar também updates do próprio peer que os envia (broadcast_state directo)
@@ -290,14 +277,10 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             # Update para nós próprios vindo de fonte não-host: aceitar (é o host a reenviar ou
             # pode ser um estado antigo — update_remote lida com isso)
             self.state.update_remote(request)
-            self._dbg("StateUpdate accepted (self-username fallback)")
             return game_pb2.Ack(received=True, by=self.state.local.username)
 
         # Update de peer não-host sobre outro jogador: aceitar em modo sem lobby activo
         # ou rejeitar em modo lobby (só o host é autoridade)
-        self._dbg(
-            f"StateUpdate rejected peer_ip={peer_ip} host_ip={host_ip} payload_user={request.username}"
-        )
         return game_pb2.Ack(received=False, by=self.state.local.username)
 
     # -- BROADCAST EVENT -------------------------------------------
@@ -397,34 +380,26 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         return True
 
     async def HostAttack(self, request, context):
-        self._dbg(
-            f"HostAttack recv attacker={request.attacker} target={request.target} peer={context.peer()}"
-        )
         if not getattr(self.node, "lobby", None) or not self.node.lobby.is_host:
-            self._dbg("HostAttack rejected (not host)")
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
 
         if not self._verify_sender_ip(context, request.attacker):
             self.state.log_event(
                 f"[Host] ⚠ HostAttack de IP inválido para '{request.attacker}' — rejeitado."
             )
-            self._dbg("HostAttack rejected by verify_sender_ip")
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
 
         return await self.resolve_attack(request, context)
 
 
     async def HostMove(self, request, context):
-        self._dbg(f"HostMove recv user={request.username} to=({request.x},{request.y}) peer={context.peer()}")
         if not getattr(self.node, "lobby", None) or not self.node.lobby.is_host:
-            self._dbg("HostMove rejected (not host)")
             return game_pb2.MoveResult(applied=False)
 
         if not self._verify_sender_ip(context, request.username):
             self.state.log_event(
                 f"[Host] ⚠ HostMove de IP inválido para '{request.username}' — rejeitado."
             )
-            self._dbg("HostMove rejected by verify_sender_ip")
             return game_pb2.MoveResult(applied=False)
 
         return await self.resolve_move(request, context)
@@ -503,20 +478,15 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     async def resolve_attack(self, request, context):
         state = self.state
         node = self.node
-        self._dbg(
-            f"resolve_attack attacker={request.attacker} target={request.target} roll={request.attack_roll}"
-        )
 
         attacker, attackerIsHost = self._lookup_player(request.attacker)
         target, targetIsHost = self._lookup_player(request.target)
 
         if attacker is None:
             self.state.log_event(f"[Host] Ataque de desconhecido '{request.attacker}' — rejeitado.")
-            self._dbg("resolve_attack rejected attacker unknown")
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
         if target is None:
             self.state.log_event(f"[Host] Ataque a desconhecido '{request.target}' — rejeitado.")
-            self._dbg("resolve_attack rejected target unknown")
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
 
 
@@ -557,7 +527,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             self.state.log_event(
                 f"{request.attacker} tentou atacar fora de alcance (dist={dist}, range={request.effective_range}) — rejeitado."
             )
-            self._dbg(f"resolve_attack rejected by range dist={dist} range={request.effective_range}")
             current_hp = state.local.hp if targetIsHost else target.hp
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=current_hp, target_died=False)
 
@@ -622,9 +591,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps_target))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        self._dbg(
-            f"resolve_attack done hit={hit} dmg={dmg} died={died} broadcast_targets={len(tasks)}"
-        )
         return game_pb2.AttackResult(hit=hit, damage_dealt=dmg, target_hp_remaining=remaining, status_effect="dead" if died else "", target_died=died)
     
     
@@ -634,16 +600,13 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         username = getattr(request, 'username', None)
         user, userIsHost = self._lookup_player(username)
-        self._dbg(f"resolve_move user={username} lookup_found={user is not None}")
 
         if user is None:
             user = self._ensure_remote_player_from_peers(username)
             userIsHost = False
             if user is None:
                 self.state.log_event(f"[Host] Move de desconhecido '{username}' — rejeitado.")
-                self._dbg("resolve_move rejected unknown after fallback")
                 return game_pb2.MoveResult(applied=False)
-            self._dbg("resolve_move recovered user via peers fallback")
 
         if userIsHost:
             ux, uy = state.local.x, state.local.y
@@ -651,7 +614,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             ux = getattr(user, 'x', None)
             uy = getattr(user, 'y', None)
         if ux is None or uy is None:
-            self._dbg("resolve_move rejected missing current coordinates")
             return game_pb2.MoveResult(applied=False)
 
         new_x = int(getattr(request, 'x', -1)) #-1 if it cant get the coord
@@ -659,12 +621,10 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         # Bounds check
         if not (0 <= new_x < game_state.MAP_W and 0 <= new_y < game_state.MAP_H):
-            self._dbg(f"resolve_move rejected out_of_bounds to=({new_x},{new_y})")
             return game_pb2.MoveResult(applied=False)
 
         # Can't move if dead
         if not user.alive:
-            self._dbg("resolve_move rejected user dead")
             return game_pb2.MoveResult(applied=False)
 
         if userIsHost: #apply locally
@@ -685,7 +645,4 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             tasks.append(self.node.send_rpc(addr, 'StateUpdate', ps))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        self._dbg(
-            f"resolve_move applied user={username} to=({new_x},{new_y}) broadcast_targets={len(tasks)}"
-        )
         return game_pb2.MoveResult(applied=True)

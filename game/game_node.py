@@ -77,10 +77,6 @@ class GameNode(Router):
         self._last_register = 0.0
         self.lobby_started_event = asyncio.Event()
 
-    def _dbg(self, msg: str):
-        role = "host" if (self.lobby and self.lobby.is_host) else "client"
-        print(f"[DBG][Node:{self.username}][{role}] {msg}")
-
     @property
     def node_id(self) -> str:
         return self.kad.node.id.hex()
@@ -88,17 +84,14 @@ class GameNode(Router):
     #---- KADEMLIA -------------------------------------------------
 
     async def start_kademlia(self):
-        self._dbg(f"start_kademlia listen={self.kad_port} bootstrap={self.bootstrap}")
         await network_handler.init_kad(self.kad, self.kad_port, bootstrap=self.bootstrap)
         self.state.local.node_id = self.node_id
-        self._dbg(f"kademlia ready node_id={self.node_id[:8]}")
 
 
     async def register_self(self, force: bool = False, min_interval: float = 10.0):
         now = time.time()
         if not force and (now - self._last_register) < min_interval:
             return
-        self._dbg(f"register_self force={force} host={self.host} grpc={self.grpc_port}")
         await network_handler.register_self(
             self.kad,
             self.node_id,
@@ -109,25 +102,19 @@ class GameNode(Router):
             self.state.local.dnd_class.name,
         )
         self._last_register = now
-        self._dbg(f"register_self done peers={len(self.peers)}")
         
 
     async def discover_peers(self):
         candidates = await network_handler.find_neighbor_addrs(self.kad, self.host, self.kad_port)
-        self._dbg(f"discover_peers candidates={len(candidates)}")
         for nid, addr in candidates:
             if nid in self.peers:
                 continue
-            self._dbg(f"discover_peers new nid={nid[:8]} addr={addr}")
             await self._handshake(addr, remote_node_id=nid)
             await self._announce_join_to(addr)
 
     async def _handshake(self, addr: str, remote_node_id: str = ""):
-        self._dbg(f"handshake start nid={remote_node_id[:8]} addr={addr}")
         stub = await self.get_or_create_grpc_stub(addr)
         await network_handler.handshake(addr, self.node_id, self.peers, remote_node_id, stub)
-        peer = self.peers.get(remote_node_id)
-        self._dbg(f"handshake done nid={remote_node_id[:8]} known={bool(peer)}")
 
     async def _announce_join_to(self, addr: str):
         req = game_pb2.JoinRequest(
@@ -136,7 +123,6 @@ class GameNode(Router):
             grpc_address=self.host,
             port=self.grpc_port,
         )
-        self._dbg(f"announce_join_to addr={addr}")
         await self.send_rpc(addr, 'Join', req)
 
     # ── gRPC ──────────────────────────────────────────────────────
@@ -155,11 +141,9 @@ class GameNode(Router):
         try:
             stub = await self.get_or_create_grpc_stub(addr)
             if not stub:
-                self._dbg(f"send no stub addr={addr}")
                 return None
             return await asyncio.wait_for(rpc_fn(stub, request), timeout=timeout)
-        except Exception as e:
-            self._dbg(f"send failed addr={addr} err={type(e).__name__}: {e}")
+        except Exception:
             # on error, drop cached channel/stub so future attempts recreate
             ch = self._channels.pop(addr, None)
             if ch:
@@ -193,7 +177,6 @@ class GameNode(Router):
 
         channel = grpc.aio.insecure_channel(addr)
         self._channels[addr] = channel
-        self._dbg(f"new grpc channel addr={addr}")
         return channel
 
     async def get_or_create_grpc_stub(self, addr: str = "") -> game_pb2_grpc.GameServiceStub:
@@ -207,7 +190,6 @@ class GameNode(Router):
             
         stub = game_pb2_grpc.GameServiceStub(ch)
         self._stubs[addr] = stub
-        self._dbg(f"new grpc stub addr={addr}")
         return stub
         
 
@@ -228,10 +210,6 @@ class GameNode(Router):
         ]
         if host_addr and all(p.get("grpc_addr") != host_addr for _, p in peers_snapshot):
             tasks.append(self.send_rpc(host_addr, 'StateUpdate', pb))
-        self._dbg(
-            f"broadcast_state targets={len(tasks)} peers={len(peers_snapshot)} "
-            f"host_fallback={bool(host_addr)} pos=({lp.x},{lp.y})"
-        )
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -245,10 +223,6 @@ class GameNode(Router):
         ]
         if host_addr and all(p.get("grpc_addr") != host_addr for _, p in peers_snapshot):
             tasks.append(self._announce_join_to(host_addr))
-        self._dbg(
-            f"announce_join targets={len(tasks)} peers={len(peers_snapshot)} "
-            f"host_fallback={bool(host_addr)}"
-        )
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -259,7 +233,6 @@ class GameNode(Router):
         lp    = self.state.local
         new_x  = max(0, min(MAP_W - 1, lp.x + dx))
         new_y  = max(0, min(MAP_H - 1, lp.y + dy))
-        self._dbg(f"move request from=({lp.x},{lp.y}) to=({new_x},{new_y})")
         await self.route_move(game_pb2.MoveRequest(username = self.username,x = new_x,y = new_y))
 
 
@@ -308,7 +281,6 @@ class GameNode(Router):
     async def input_loop(self):
         """Loop de input durante a partida."""
         print("\n[Jogo] A entrar na partida…")
-        self._dbg("input_loop start")
         await self.announce_join()
 
         x, y = self.state.random_spawn()
@@ -321,7 +293,6 @@ class GameNode(Router):
             await self._broadcast_event(game_pb2.GameEvent.MATCH_STARTED)
 
         await self.broadcast_state()
-        self._dbg("input_loop initial state broadcast done")
 
         self._reader.start()
         render_task = asyncio.create_task(self._render_loop())
@@ -403,8 +374,8 @@ class GameNode(Router):
                     self.state.phase = MatchPhase.ENDED   # bloqueia re-trigger
                     asyncio.create_task(self._handle_match_end())
 
-            except Exception as e:
-                self._dbg(f"refresh_loop error {type(e).__name__}: {e}")
+            except Exception:
+                pass
             await asyncio.sleep(0.5)
             
             
@@ -413,7 +384,6 @@ class GameNode(Router):
 
     async def run(self):
         logging.getLogger("kademlia").setLevel(logging.ERROR)
-        self._dbg("run start")
 
         await self.start_kademlia()
         await self.start_grpc_server()
@@ -443,6 +413,5 @@ class GameNode(Router):
                 pass
         self._channels.clear()
         self._stubs.clear()
-        self._dbg("run stop")
 
         print("\n[Jogo] Saíste. Até à próxima!")
