@@ -1,0 +1,9 @@
+services:
+  dnd:
+    build: .
+    image: dnd-death-match
+
+    network_mode: host #por causa disto, só vai funcionar em linux este docker compose
+
+    stdin_open: true
+    tty: true
