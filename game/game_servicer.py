@@ -223,7 +223,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         if not approved:
             self.state.log_event(
-                f"[Host] ⚠ Ataque rejeitado de \033[31m{request.attacker}\033[0m "
+                f"[Host] Ataque rejeitado de \033[31m{request.attacker}\033[0m "
                 f"({request.attacker_class}): {reason}"
             )
 
@@ -264,7 +264,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         if not self._verify_sender_ip(context, request.attacker):
             self.state.log_event(
-                f"[Host] ⚠ HostAttack de IP inválido para '{request.attacker}' — rejeitado."
+                f"[Host] HostAttack de IP inválido para '{request.attacker}' — rejeitado."
             )
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
 
@@ -277,7 +277,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         if not self._verify_sender_ip(context, request.username):
             self.state.log_event(
-                f"[Host] ⚠ HostMove de IP inválido para '{request.username}' — rejeitado."
+                f"[Host] HostMove de IP inválido para '{request.username}' — rejeitado."
             )
             return game_pb2.MoveResult(applied=False)
 
@@ -377,7 +377,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         )
         if not approved:
             self.state.log_event(
-                f"[Host] ⚠ Ataque rejeitado de {request.attacker} ({request.attacker_class}): {reason}"
+                f"[Host] Ataque rejeitado de {request.attacker} ({request.attacker_class}): {reason}"
             )
             if(targetIsHost):
                 current_hp = state.local.hp
