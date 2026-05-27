@@ -140,7 +140,10 @@ class LobbyManager:
             if lobby.status == LobbyStatus.OPEN:
                 lobbies[code] = lobby
 
-        dht_codes = await self._probe_lobby_codes(set(self.peers.keys()))
+        dht_codes = await self._probe_lobby_codes(
+            set(self.peers.keys()) |
+            {lobby.owner for lobby, _ in self.known_lobbies.values() if lobby.owner}
+        )
         pending_codes = set()
         for code in dht_codes:
             if code not in lobbies:
