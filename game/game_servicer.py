@@ -170,7 +170,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         peer = context.peer() 
         
         host_addr = self.node.lobby.host_addr  
-        print(f"[DEBUG] StateUpdate: peer={peer}, host_addr={host_addr}")
+        #print(f"[DEBUG] StateUpdate: peer={peer}, host_addr={host_addr}")
         if host_addr:
             peer_ip = peer.split(":")[1] if peer.startswith("ipv4:") else None
             host_ip = host_addr.split(":")[0]
