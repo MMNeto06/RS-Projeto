@@ -110,20 +110,10 @@ class GameNode(Router):
             if nid in self.peers:
                 continue
             await self._handshake(addr, remote_node_id=nid)
-            await self._announce_join_to(addr)
 
     async def _handshake(self, addr: str, remote_node_id: str = ""):
         stub = await self.get_or_create_grpc_stub(addr)
         await network_handler.handshake(addr, self.node_id, self.peers, remote_node_id, stub)
-
-    async def _announce_join_to(self, addr: str):
-        req = game_pb2.JoinRequest(
-            username=self.username,
-            class_name=self.state.local.dnd_class.name,
-            grpc_address=self.host,
-            port=self.grpc_port,
-        )
-        await self.send_rpc(addr, 'Join', req)
 
     # ── gRPC ──────────────────────────────────────────────────────
 
@@ -211,9 +201,15 @@ class GameNode(Router):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def announce_join(self):
+        req = game_pb2.JoinRequest(
+            username=self.username,
+            class_name=self.state.local.dnd_class.name,
+            grpc_address=self.host,
+            port=self.grpc_port,
+        )
         peers_snapshot = list(self.peers.items())
         tasks = [
-            self._announce_join_to(p["grpc_addr"])
+            self.send_rpc(p["grpc_addr"], 'Join', req)
             for nid, p in peers_snapshot
             if nid != self.node_id
         ]

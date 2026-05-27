@@ -94,6 +94,11 @@ class GameServiceStub(object):
                 request_serializer=game__pb2.MoveRequest.SerializeToString,
                 response_deserializer=game__pb2.MoveResult.FromString,
                 _registered_method=True)
+        self.ReadyToStart = channel.unary_unary(
+                '/game.GameService/ReadyToStart',
+                request_serializer=game__pb2.LobbyNotification.SerializeToString,
+                response_deserializer=game__pb2.LobbyNotificationAck.FromString,
+                _registered_method=True)
 
 
 class GameServiceServicer(object):
@@ -171,6 +176,12 @@ class GameServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReadyToStart(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_GameServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -233,6 +244,11 @@ def add_GameServiceServicer_to_server(servicer, server):
                     servicer.HostMove,
                     request_deserializer=game__pb2.MoveRequest.FromString,
                     response_serializer=game__pb2.MoveResult.SerializeToString,
+            ),
+            'ReadyToStart': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReadyToStart,
+                    request_deserializer=game__pb2.LobbyNotification.FromString,
+                    response_serializer=game__pb2.LobbyNotificationAck.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -559,6 +575,33 @@ class GameService(object):
             '/game.GameService/HostMove',
             game__pb2.MoveRequest.SerializeToString,
             game__pb2.MoveResult.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReadyToStart(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/game.GameService/ReadyToStart',
+            game__pb2.LobbyNotification.SerializeToString,
+            game__pb2.LobbyNotificationAck.FromString,
             options,
             channel_credentials,
             insecure,
