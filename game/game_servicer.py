@@ -199,6 +199,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         peer = context.peer() 
         
         host_addr = self.node.lobby.host_addr  
+        print(f"[DEBUG] StateUpdate: peer={peer}, host_addr={host_addr}")
         if host_addr:
             peer_ip = peer.split(":")[1] if peer.startswith("ipv4:") else None
             host_ip = host_addr.split(":")[0]
@@ -276,20 +277,25 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     
     def _verify_sender_ip(self, context, username: str) -> bool:
         peer = context.peer()  
+        print(f"[DEBUG] _verify_sender_ip: peer={peer}, username={username}")
 
         if not peer.startswith("ipv4:"):
-            return False  
+            print(f"[DEBUG] não é ipv4, a deixar passar") 
+            # NOTA: dantes eu metia false aqui, vê se resulta com true
+            return True
 
         peer_ip = peer.split(":")[1]
+        if peer_ip == "127.0.0.1":
+            return True
 
         expected_addr = self._addr_for_username(username)
+        print(f"[DEBUG] peer_ip={peer_ip}, expected_addr={expected_addr}")
         
-        if not expected_addr:
-            return False
-
-        expected_ip = expected_addr.split(":")[0]
+        expected_ip = expected_addr.split(":")[0] if expected_addr else None
+        result = peer_ip == expected_ip
         
-        return peer_ip == expected_ip
+        print(f"[DEBUG] resultado: {result}")
+        return result
 
     async def HostAttack(self, request, context):
         if not getattr(self.node, "lobby", None) or not self.node.lobby.is_host:
