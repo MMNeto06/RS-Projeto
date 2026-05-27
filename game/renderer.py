@@ -105,7 +105,7 @@ def render_map(state: GameState) -> str:
         symbol = f"{BOLD}{CYAN}☺ {RESET}" if lp.alive else f"{RED}✝ {RESET}"
         grid[lp.y][lp.x] = symbol
 
-    border_h = "—" * (MAP_W * 2 + 2)
+    border_h = "-" * (MAP_W * 2 + 2)
     lines = [f"┌{border_h}┐"]
     for row in grid:
         lines.append("│ " + "".join(row) + " │")
