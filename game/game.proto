@@ -88,6 +88,8 @@ message JoinRequest {
   string class_name = 2;
   string grpc_address = 3;
   int32 port = 4;
+  int32 x = 5; 
+  int32 y = 6; 
 }
 
 message LeaveNotification {

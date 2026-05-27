@@ -206,6 +206,8 @@ class GameNode(Router):
             class_name=self.state.local.dnd_class.name,
             grpc_address=self.host,
             port=self.grpc_port,
+            x=self.state.local.x, 
+            y=self.state.local.y
         )
         peers_snapshot = list(self.peers.items())
         tasks = [
@@ -271,10 +273,11 @@ class GameNode(Router):
     async def input_loop(self):
         """Loop de input durante a partida."""
         print("\n[Jogo] A entrar na partida…")
-        await self.announce_join()
 
         x, y = self.state.random_spawn()
         self.state.local.x, self.state.local.y = x, y
+
+        await self.announce_join()
 
         if self.state.phase != MatchPhase.ACTIVE:
             self.state.phase      = MatchPhase.ACTIVE

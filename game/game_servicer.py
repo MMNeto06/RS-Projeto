@@ -61,7 +61,7 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                 username=request.username,
                 node_id=nid,
                 grpc_addr=f"{request.grpc_address}:{request.port}",
-                hp=0, max_hp=0, x=0, y=0,
+                hp=0, max_hp=0, x=request.x, y=request.y,
                 alive=True,
                 class_name=request.class_name,
                 armor_class=0, kills=0, deaths=0,
