@@ -34,7 +34,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         )
         return player, False
 
-    @staticmethod
     def _extract_ip(peer_str: str) -> str | None:
         """Extrai IP de strings gRPC como 'ipv4:1.2.3.4:PORT' ou 'ipv6:[::1]:PORT'."""
         # ipv4:A.B.C.D:PORT
@@ -70,51 +69,24 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     # -- JOIN ------------------------------------------------------
 
     async def Join(self, request, context):
-        import time as _time
+        nid = request.username
         grpc_addr = f"{request.grpc_address}:{request.port}"
-
-        # Procurar entrada existente pelo username (case-insensitive)
-        existing_key = next(
-            (k for k, v in self.state.others.items()
-             if v.username.lower() == request.username.lower()),
-            None,
-        )
-        if existing_key is not None:
-            existing = self.state.others[existing_key]
-            existing.grpc_addr = grpc_addr
-            if request.class_name:
-                existing.class_name = request.class_name
-        else:
-            self.state.others[request.username] = RemotePlayer(
+        existing = self.state.others.get(nid)
+        if existing is None:
+            self.state.others[nid] = RemotePlayer(
                 username=request.username,
-                node_id=request.username,
+                node_id=nid,
                 grpc_addr=grpc_addr,
                 hp=0, max_hp=0, x=0, y=0,
                 alive=True,
                 class_name=request.class_name,
                 armor_class=0, kills=0, deaths=0,
             )
-
-        # Garantir que este peer está no dict peers do node com grpc_addr correcto
-        existing_peer = next(
-            (p for p in self.node.peers.values()
-             if p.get("username", "").lower() == request.username.lower()),
-            None,
-        )
-        if existing_peer is not None:
-            existing_peer["grpc_addr"] = grpc_addr
-            if request.class_name:
-                existing_peer["class_name"] = request.class_name
         else:
-            tmp_key = f"join_{request.username}"
-            self.node.peers[tmp_key] = {
-                "node_id":    tmp_key,
-                "username":   request.username,
-                "grpc_addr":  grpc_addr,
-                "last_seen":  _time.time(),
-                "class_name": request.class_name,
-            }
-
+            # Sempre actualiza o grpc_addr — pode ter chegado vazio via StateUpdate
+            existing.grpc_addr = grpc_addr
+            if request.class_name:
+                existing.class_name = request.class_name
         self.state.log_event(
             f"\033[32m{request.username}\033[0m ({request.class_name}) entrou no jogo."
         )
@@ -250,39 +222,19 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     async def StateUpdate(self, request, context):
         host_addr = self.node.lobby.host_addr
 
-        # Se somos o host, aceitar StateUpdate de qualquer peer (são broadcasts de estado)
-        if self.node.lobby.is_host:
+        if not host_addr or self.node.lobby.is_host:
             self.state.update_remote(request)
             return game_pb2.Ack(received=True, by=self.state.local.username)
 
-        # Sem lobby activo: aceitar de todos
-        if not host_addr:
-            self.state.update_remote(request)
-            return game_pb2.Ack(received=True, by=self.state.local.username)
+        peer_ip  = _extract_ip(context.peer())
+        host_ip  = host_addr.split(":")[0]
 
-        # Em lobby como não-host: aceitar updates do host E updates do próprio jogador
-        # (o host faz broadcast do estado de todos após resolver ataques/movimentos,
-        #  mas peers também fazem broadcast_state directamente — ambos são legítimos)
-        peer_ip = GameServicer._extract_ip(context.peer())
-        host_ip = host_addr.split(":")[0]
+        if peer_ip is not None and peer_ip != host_ip:
+            return game_pb2.Ack(received=False, by=self.state.local.username)
 
-        # Aceitar se vier do host OU se o IP não for determinável (segurança network edge)
-        if peer_ip is None or peer_ip == host_ip:
-            self.state.update_remote(request)
-            return game_pb2.Ack(received=True, by=self.state.local.username)
-
-        # Aceitar também updates do próprio peer que os envia (broadcast_state directo)
-        # Identificar pelo username no payload
-        if request.username.lower() == self.state.local.username.lower():
-            # Update para nós próprios vindo de fonte não-host: aceitar (é o host a reenviar ou
-            # pode ser um estado antigo — update_remote lida com isso)
-            self.state.update_remote(request)
-            return game_pb2.Ack(received=True, by=self.state.local.username)
-
-        # Update de peer não-host sobre outro jogador: aceitar em modo sem lobby activo
-        # ou rejeitar em modo lobby (só o host é autoridade)
-        return game_pb2.Ack(received=False, by=self.state.local.username)
-
+        self.state.update_remote(request)
+        return game_pb2.Ack(received=True, by=self.state.local.username)
+    
     # -- BROADCAST EVENT -------------------------------------------
 
     async def BroadcastEvent(self, request, context):

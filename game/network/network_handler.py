@@ -97,12 +97,7 @@ async def handshake(addr: str, node_id_prop: str, peers: dict, remote_node_id: s
             timeout=2.0,
         )
         key = remote_node_id
-        if key in peers:
-            # Actualizar grpc_addr e username caso tenham mudado
-            peers[key]["grpc_addr"] = addr
-            peers[key]["username"]  = resp.username
-            peers[key]["last_seen"] = time.time()
-        else:
+        if key not in peers:
             peers[key] = {
                 "node_id":    remote_node_id,
                 "username":   resp.username,
@@ -110,10 +105,5 @@ async def handshake(addr: str, node_id_prop: str, peers: dict, remote_node_id: s
                 "last_seen":  time.time(),
                 "class_name": "",
             }
-        # Se existia uma entrada temporária criada pelo Join (chave "join_<username>"),
-        # substituí-la pela entrada com node_id real
-        tmp_key = f"join_{resp.username}"
-        if tmp_key in peers and tmp_key != key:
-            del peers[tmp_key]
     except Exception:
         pass
