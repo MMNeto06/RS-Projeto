@@ -40,7 +40,6 @@ class Router:
 
 
     async def route_attack(self, req, target_peer: dict = None):
-        #adapter
         return await self._route_attack_request(req, target_peer)
     
     async def route_move(self, req):

@@ -1,5 +1,3 @@
-#GameNode — integra Kademlia, servidor gRPC do jogo e loop de input.
-
 import asyncio
 import time
 import sys
@@ -31,7 +29,6 @@ from combat_engine      import CombatEngine
 from command_dispatcher import CommandDispatcher
 from lobby.lobby_enums import LobbyStatus
 
-# Segundos de exibição do ecrã de fim antes de reiniciar
 _MATCH_END_PAUSE = 8
 
 
@@ -81,7 +78,6 @@ class GameNode(Router):
     def node_id(self) -> str:
         return self.kad.node.id.hex()
 
-    #---- KADEMLIA -------------------------------------------------
 
     async def start_kademlia(self):
         await network_handler.init_kad(self.kad, self.kad_port, bootstrap=self.bootstrap)
@@ -115,7 +111,6 @@ class GameNode(Router):
         stub = await self.get_or_create_grpc_stub(addr)
         await network_handler.handshake(addr, self.node_id, self.peers, remote_node_id, stub)
 
-    # ── gRPC ──────────────────────────────────────────────────────
 
     async def start_grpc_server(self):
         self.grpc_server = grpc.aio.server()
@@ -134,7 +129,6 @@ class GameNode(Router):
                 return None
             return await asyncio.wait_for(rpc_fn(stub, request), timeout=timeout)
         except Exception:
-            # on error, drop cached channel/stub so future attempts recreate
             ch = self._channels.pop(addr, None)
             if ch:
                 try:
@@ -147,7 +141,6 @@ class GameNode(Router):
             return None
         
     async def send_rpc(self, addr: str, rpc, request, timeout: float = 3.0):
-        #so the lambda isnt repeated everywhere
         if isinstance(rpc, str):
             rpc_name = rpc
             rpc_fn = lambda s, r: getattr(s, rpc_name)(r)
@@ -160,11 +153,9 @@ class GameNode(Router):
     async def get_or_create_grpc_channel(self, addr: str = "") -> grpc.aio.Channel:
         if not addr: return None
             
-
         channel = self._channels.get(addr)
         if channel: return channel
             
-
         channel = grpc.aio.insecure_channel(addr)
         self._channels[addr] = channel
         return channel
@@ -182,16 +173,11 @@ class GameNode(Router):
         self._stubs[addr] = stub
         return stub
         
-
-
-
-    #--- BROADCAST ----------------------------------------------
-
     async def broadcast_state(self):
         lp = self.state.local
-        lp.tick_effects()   # limpa efeitos expirados antes de enviar
+        lp.tick_effects() 
         pb = local_player_to_proto(lp, self.state.match_id)
-        peers_snapshot = list(self.peers.items()) #to avoid race conditions
+        peers_snapshot = list(self.peers.items()) 
         tasks = [
             self.send_rpc(p["grpc_addr"], 'StateUpdate', pb)
             for nid, p in peers_snapshot
@@ -219,16 +205,12 @@ class GameNode(Router):
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
-    #---- MOVIMENTO -----------------------------------------------
-
     async def move(self, dx: int, dy: int):
         lp    = self.state.local
         new_x  = max(0, min(MAP_W - 1, lp.x + dx))
         new_y  = max(0, min(MAP_H - 1, lp.y + dy))
         await self.route_move(game_pb2.MoveRequest(username = self.username,x = new_x,y = new_y))
 
-
-    #---- RENDER LOOP ----------------------------------------------
 
     async def _render_loop(self):
         while True:
@@ -249,13 +231,7 @@ class GameNode(Router):
             else:
                 await asyncio.sleep(1)
 
-    #---- INPUT LOOP --------------------------------------------------
-
     async def _lobby_sync_loop(self):
-        """
-        Corre em background e monitoriza o estado do lobby na DHT.
-        Quando o host muda para 'started', activa a fase ACTIVE.
-        """
         while True:
             await asyncio.sleep(3)
             if not self.lobby.session:
@@ -271,7 +247,6 @@ class GameNode(Router):
                     self.state.log_event("[Lobby] O host saiu — lobby encerrado.")
 
     async def input_loop(self):
-        """Loop de input durante a partida."""
         print("\n[Jogo] A entrar na partida…")
 
         x, y = self.state.random_spawn()
@@ -306,8 +281,6 @@ class GameNode(Router):
             self._reader.stop()
 
 
-    #---- MATCH END / RESET --------------------------------------------
-
     async def _broadcast_event(self, event_type, payload: str = ""):
         event = game_pb2.GameEvent(
             type=event_type,
@@ -329,7 +302,6 @@ class GameNode(Router):
         sb     = self.state.scoreboard()
         winner = sb[0][0] if sb else "ninguém"
 
-        # Mostrar resultado
         self.state.log_event("━" * 30)
         self.state.log_event(f"🏆 FIM DE JOGO!  Vencedor: {winner}")
         for uname, k, d in sb:
@@ -342,7 +314,6 @@ class GameNode(Router):
         await self._reset_match()
 
     async def _reset_match(self):
-        """Repõe todos os jogadores e inicia nova partida."""
         x, y = self.state.random_spawn()
         self.state.local.reset_for_new_match(x, y)
         self.state.reset_others_for_new_match()
@@ -353,7 +324,6 @@ class GameNode(Router):
         await self._broadcast_event(game_pb2.GameEvent.MATCH_RESET)
         await self.broadcast_state()
 
-    #--- REFRESH LOOP --------------------------------------------
 
     async def _refresh_loop(self):
         while True:
@@ -372,9 +342,6 @@ class GameNode(Router):
             await asyncio.sleep(0.5)
             
             
-
-    #---- ARRANQUE -------------------------------------------
-
     async def run(self):
         logging.getLogger("kademlia").setLevel(logging.ERROR)
 

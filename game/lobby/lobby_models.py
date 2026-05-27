@@ -9,14 +9,10 @@ class Lobby:
     name: str
     owner: str
     host_addr: str
-
     max_players: int
-
     status: LobbyStatus = LobbyStatus.OPEN
-
     created_at: float = 0.0
     version: float = 0.0
-
     source: str = ""
 
     def __post_init__(self):
@@ -50,9 +46,7 @@ class Lobby:
 class LobbyMember:
     node_id: str
     username: str
-
     grpc_addr: str
-
     ready: bool = False
     joined_at: float = 0.0
 

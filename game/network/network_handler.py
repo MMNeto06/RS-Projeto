@@ -16,37 +16,34 @@ import os
 
 
 async def init_kad(kad, kad_port: int, bootstrap: Optional[str] = None) -> None:
-    #start listening 
     await kad.listen(kad_port)
 
-    #if there is another peer, then bootstrap to it
     if bootstrap:
         print(f"[DHT] A ligar ao bootstrap {bootstrap}…")
         await kad.bootstrap([bootstrap])
         await asyncio.sleep(1)
         print("[DHT] Ligado!")
-    else: #if not, then just dont do anything, the network starts with the listen
+    else: 
         print("[DHT] Primeiro node (bootstrap).")
 
 
 async def find_neighbor_addrs(kad, host: str, kad_port: int, ksize: int = 20) -> List[Tuple[str, str]]:
-    #returns a list of (node_id, grpc_addr) tuples, for each node found in the dht;
-    await kad.get("game:discover") #makes sure the routing table isnt stale
-    target = kad_node.Node(digest(os.urandom(16))) #random target for more diverse results
-    neighbors = kad.protocol.router.find_neighbors(target)[:ksize] #get nodes closest to target
+    await kad.get("game:discover") 
+    target = kad_node.Node(digest(os.urandom(16))) 
+    neighbors = kad.protocol.router.find_neighbors(target)[:ksize] 
 
     candidate_ids: List[str] = []
     for n in neighbors:
-        if (n.ip, n.port) == (host, kad_port): #skip self
+        if (n.ip, n.port) == (host, kad_port): 
             continue
         nid = n.id.hex()
-        if nid in candidate_ids: #dont add if it's already in the list
+        if nid in candidate_ids: 
             continue
         candidate_ids.append(nid)
 
     addr_map = await probe_addrs(kad, candidate_ids, 10, 0.5)
 
-    results: List[Tuple[str, str]] = [] #need to convert because the method gives a dict, and I can't change it because of dependencies
+    results: List[Tuple[str, str]] = [] 
     for nid in candidate_ids:
         addr = addr_map.get(nid)
         if addr:
@@ -55,7 +52,7 @@ async def find_neighbor_addrs(kad, host: str, kad_port: int, ksize: int = 20) ->
 
 
 async def probe_addrs(kad, node_ids: Iterable[str], concurrency: int, timeout: float) -> Dict[str, str]:
-    sem = asyncio.Semaphore(concurrency) #im converting to a semaphore so I can have concurrent lookups instead of doing so many blocking iterative ones
+    sem = asyncio.Semaphore(concurrency) 
 
     async def get_with_sem(nid: str):
         async with sem:
@@ -75,7 +72,6 @@ async def probe_addrs(kad, node_ids: Iterable[str], concurrency: int, timeout: f
 
 
 async def register_self(kad, node_id: str, host: str, grpc_port: int, username: str, peers: dict, class_name: str) -> None:
-    # registers the local node in the DHT and populates the peers map.
     addr = f"{host}:{grpc_port}"
     await kad.set(addr_key(node_id), addr)
     await kad.set(username_key(username), node_id)
@@ -88,7 +84,6 @@ async def register_self(kad, node_id: str, host: str, grpc_port: int, username: 
     }
 
 
-#Actually this is grpc , should change it somewhere else
 async def handshake(addr: str, node_id_prop: str, peers: dict, remote_node_id: str = "", stub: game_pb2_grpc.GameServiceStub = None) -> None:
     try:
         #do a ping handshake and populate peers 

@@ -52,7 +52,7 @@ class LobbyManager:
         msg = json.dumps(lobby.to_dict())
 
         tasks = []
-        snapshot = list(sample) #to avoid race conditions
+        snapshot = list(sample) # evitar race conditions
         for p in snapshot:
             if not p.get("grpc_addr"):
                 continue
@@ -126,7 +126,6 @@ class LobbyManager:
     async def list_open(self):
         lobbies: dict[str, Lobby] = {}
 
-        # 1. gossip cache (rápido)
         for code, (lobby, ts) in self.known_lobbies.items():
             if time.time() - ts > 30:
                 continue

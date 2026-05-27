@@ -1,11 +1,3 @@
-"""
-combat_engine.py
-Motor de combate — ataque básico, abilidades e modificadores on-hit.
-
-Desacoplado do GameNode: recebe o estado e um callable de roteamento,
-sem saber nada de DHT, gRPC ou lobby.
-"""
-
 import game_pb2
 
 from dnd_classes import AbilityEffect, AbilityKind, roll
@@ -14,26 +6,12 @@ from utils import chebyshev
 
 
 class CombatEngine:
-    """
-    Encapsula toda a lógica de combate do jogador local.
-
-    Parâmetros
-    ----------
-    state            : estado partilhado do jogo
-    peers            : dict de peers (partilhado com GameNode)
-    route_attack_fn  : coroutine async (req, peer) -> AttackResult | None
-                       — a responsabilidade de roteamento pertence ao GameNode
-    """
-
     def __init__(self, state: GameState, peers: dict, route_attack_fn):
         self.state = state
         self._peers = peers
         self._route_attack = route_attack_fn
 
-    # ── HELPERS ───────────────────────────────────────────────────
-
     def find_peer(self, username: str) -> dict | None:
-        """Procura peer pelo username (case-insensitive)."""
         target_lower = username.lower()
         return next(
             (v for v in self._peers.values()
@@ -42,11 +20,6 @@ class CombatEngine:
         )
 
     def check_range(self, target_username: str, effective_range: int) -> bool:
-        """
-        Verifica se o alvo está dentro de `effective_range` tiles (Chebyshev).
-        Devolve True se ok, False (e loga mensagem) se fora de alcance.
-        Se não tiver posição do alvo, deixa passar (estado ainda não sincronizado).
-        """
         target_state = self.state.others.get(target_username)
         if target_state is None:
             return True
@@ -69,18 +42,7 @@ class CombatEngine:
         damage_roll: int,
         is_ability: bool = False,
     ) -> tuple[int, int, list[str]]:
-        """
-        Percorre os OnHitModifiers da classe e aplica os activos ao ataque.
 
-        Parâmetros
-        ----------
-        target_username : alvo (para verificar marked_target_only)
-        attack_roll     : valor inicial do roll de ataque
-        damage_roll     : valor inicial do roll de dano
-        is_ability      : True -> salta modificadores com basic_attack_only=True
-
-        Devolve (novo_attack_roll, novo_damage_roll, extra_notes)
-        """
         lp = self.state.local
         extra_notes: list[str] = []
 
@@ -114,13 +76,8 @@ class CombatEngine:
 
         return attack_roll, damage_roll, extra_notes
 
-    # ── ATAQUE BÁSICO ─────────────────────────────────────────────
 
     async def send_attack(self, target_username: str):
-        """
-        Ataque básico com arma da classe.
-        Aplica on_hit_modifiers activos de forma genérica.
-        """
         peer = self.find_peer(target_username)
         if not peer:
             self.state.log_event(f"[!] Jogador '{target_username}' não encontrado.")
@@ -175,14 +132,8 @@ class CombatEngine:
             )
         return result
 
-    # ── ABILITY DISPATCHER ────────────────────────────────────────
 
     async def use_ability(self, idx: int, target: str | None = None) -> bool:
-        """
-        Executa a abilidade `idx` (0-based) da classe do jogador local.
-        Aplica cooldown internamente; devolve True se a abilidade foi usada
-        (o chamador pode então invocar broadcast_state).
-        """
         lp = self.state.local
         abilities = lp.dnd_class.abilities
 
@@ -210,10 +161,7 @@ class CombatEngine:
     async def _dispatch_ability(
         self, ab, eff: AbilityEffect, target: str | None
     ) -> bool:
-        """
-        Chama o handler correcto com base em eff.kind.
-        Devolve True se a abilidade foi executada, False se abortou.
-        """
+
         K = AbilityKind
         k = eff.kind
 
@@ -255,10 +203,8 @@ class CombatEngine:
         self.state.log_event(f"[!] {ab.name}: kind desconhecido '{k}'.")
         return False
 
-    # ── ABILITY HANDLERS ──────────────────────────────────────────
 
     def _ab_self_heal(self, ab, eff: AbilityEffect) -> None:
-        """Cura o jogador local. Aplica localmente sem roteamento ao host."""
         lp = self.state.local
         heal = (roll(eff.heal_dice) if eff.heal_dice else 0) + eff.heal_fixed
         lp.heal(heal)
@@ -267,13 +213,11 @@ class CombatEngine:
         )
 
     def _ab_self_buff(self, ab, eff: AbilityEffect) -> None:
-        """Activa um efeito temporário no jogador local."""
         lp = self.state.local
         lp.set_effect(eff.effect_key, eff.effect_duration, eff.effect_label)
         self.state.log_event(f"{eff.emoji} {ab.name}: {ab.description}")
 
     def _ab_target_mark(self, ab, eff: AbilityEffect, target: str) -> None:
-        """Marca um alvo (Hunter's Mark, Hex). Aplica localmente."""
         lp = self.state.local
         lp.marked_target = target
         lp.set_effect(eff.mark_effect_key, eff.mark_duration, eff.mark_label)
@@ -284,7 +228,6 @@ class CombatEngine:
     def _ab_validate_target(
         self, ab, eff: AbilityEffect, target: str | None
     ) -> bool:
-        """Verifica que o alvo existe e está ao alcance."""
         if not target:
             self.state.log_event(f"{eff.emoji} Uso: <número> <username>")
             return False
@@ -297,7 +240,6 @@ class CombatEngine:
     async def _ab_target_damage(
         self, ab, eff: AbilityEffect, target: str
     ) -> None:
-        """Dano num único alvo. Aplica on_hit_modifiers não-básicos (ex: Hex)."""
         lp = self.state.local
         peer = self.find_peer(target)
 
@@ -334,7 +276,6 @@ class CombatEngine:
     async def _ab_target_drain(
         self, ab, eff: AbilityEffect, target: str
     ) -> None:
-        """Dano + devolve drain_ratio*dano em HP ao atacante."""
         lp = self.state.local
         peer = self.find_peer(target)
 
@@ -376,7 +317,6 @@ class CombatEngine:
     async def _ab_multi_hit(
         self, ab, eff: AbilityEffect, target: str
     ) -> None:
-        """N ataques separados no mesmo alvo. Para se o alvo morrer a meio."""
         lp = self.state.local
         peer = self.find_peer(target)
         total_dmg = 0
@@ -412,10 +352,6 @@ class CombatEngine:
         )
 
     async def _ab_aoe(self, ab, eff: AbilityEffect) -> bool:
-        """
-        Ataca todos os inimigos vivos no raio eff.aoe_radius.
-        Devolve False (sem cooldown) se não houver alvos.
-        """
         lp = self.state.local
         nearby = [
             p for p in self.state.others.values()
@@ -438,7 +374,6 @@ class CombatEngine:
             if eff.use_class_damage_modifier:
                 dmg += lp.dnd_class.damage_modifier
 
-            # on_hit_modifiers não-básicos (ex: Hunter's Mark no Volley)
             attack_roll, dmg, extra_notes = self.apply_on_hit_modifiers(
                 t.username, attack_roll, dmg, is_ability=True
             )

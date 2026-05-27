@@ -1,55 +1,14 @@
-"""
-game/dnd_classes.py
-Definições das classes DnD jogáveis.
-
-Cada classe tem:
-  - hp_base, armor_class_base
-  - weapon principal + dados de dano (ex: "1d8" → roll_damage)
-  - attack_range: distância máxima de ataque em tiles (distância de Chebyshev:
-    max(|dx|, |dy|)). Range 1 = melee (8 células adjacentes).
-  - lista de 3 abilidades, cada uma com um AbilityEffect declarativo
-  - on_hit_modifiers: bónus passivos aplicados em cada ataque (basic e/ou ability)
-
-Regras simplificadas (D&D 5e-inspired):
-  - Ataque: d20 + attack_modifier vs AC do alvo
-  - Dano:   dado de arma + damage_modifier (mínimo 1)
-  - Range:  check feito no atacante (game_node) e validado no alvo (game_servicer)
-
-──────────────────────────────────────────────────────────────────
-ARQUITECTURA DE ABILIDADES
-──────────────────────────────────────────────────────────────────
-Cada Ability descreve o que faz através de um AbilityEffect com um `kind`:
-
-  SELF_HEAL     — cura o próprio jogador (Second Wind, Cure Wounds, Lay on Hands)
-  SELF_BUFF     — aplica um efeito activo local (Fortify, Mage Armor, Eagle Eye…)
-  TARGET_DAMAGE — dano num alvo único, auto-acerto ou roll-to-hit
-  TARGET_DRAIN  — dano num alvo + cura o atacante (Life Drain)
-  MULTI_HIT     — N ataques separados no mesmo alvo (Flurry of Blows)
-  AOE_DAMAGE    — ataca todos os inimigos no raio (Volley)
-  TARGET_MARK   — marca um alvo com um efeito timed (Hunter's Mark, Hex)
-
-OnHitModifier lista bónus passivos (por classe) que se activam quando um
-determinado active_effect está presente:
-  - basic_attack_only=True  → só se aplica no send_attack (não em abilidades)
-  - basic_attack_only=False → aplica-se em send_attack E em abilidades de dano
-"""
-
 import random
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
-
-# ── DADOS ──────────────────────────────────────────────────────────
-
 def roll(notation: str) -> int:
-    """Lança dados no formato NdX (e.g. '2d6', '1d8'). Devolve o total."""
     n, x = notation.lower().split("d")
     return sum(random.randint(1, int(x)) for _ in range(int(n)))
 
 
 def _max_roll(notation: str) -> int:
-    """Devolve o valor máximo possível de uma notação de dados (e.g. '3d8' → 24)."""
     if not notation:
         return 0
     n, x = notation.lower().split("d")
@@ -57,30 +16,16 @@ def _max_roll(notation: str) -> int:
 
 
 def theoretical_max_damage(cls: "DnDClass") -> int:
-    """
-    Calcula o dano máximo teórico por AttackRequest para uma classe.
-    Usado em validate_attack (host) para detectar trapaça.
-
-    Considera ataque básico + on_hit_modifiers activos, e o pior caso de cada
-    abilidade de dano. Para MULTI_HIT valida por hit individual (cada hit é um
-    AttackRequest separado). Adiciona margem de +2 para variação aleatória.
-
-    Esta função é a fonte de verdade: elimina a necessidade de manter
-    MAX_DAMAGE_BY_CLASS hardcoded em lobby_manager.py.
-    """
-    # ── Ataque básico ──────────────────────────────────────────────
     base = _max_roll(cls.damage_dice) + cls.damage_modifier
 
-    # On-hit modifiers que só se aplicam a ataques básicos
     basic_modifier_bonus = sum(
         _max_roll(m.damage_dice) for m in cls.on_hit_modifiers
         if m.damage_dice and m.basic_attack_only
     )
-    # twin_weapon duplica o dado de arma base
+
     twin_bonus = sum(base for m in cls.on_hit_modifiers if m.twin_weapon)
     basic_max = base + basic_modifier_bonus + twin_bonus
 
-    # On-hit modifiers não-básicos (aplicam-se também a abilidades de dano)
     non_basic_bonus = sum(
         _max_roll(m.damage_dice) for m in cls.on_hit_modifiers
         if m.damage_dice and not m.basic_attack_only
@@ -99,7 +44,6 @@ def theoretical_max_damage(cls: "DnDClass") -> int:
             candidates.append(dmg)
 
         elif k == AbilityKind.MULTI_HIT:
-            # Cada hit chega como AttackRequest independente — validamos por hit
             per_hit = _max_roll(eff.damage_dice) + eff.damage_fixed
             candidates.append(per_hit)
 
@@ -110,10 +54,9 @@ def theoretical_max_damage(cls: "DnDClass") -> int:
             dmg += non_basic_bonus
             candidates.append(dmg)
 
-    return max(candidates) + 2  # margem anti-trapaça
+    return max(candidates) + 2  
 
 
-# ── TIPOS DE EFEITO ────────────────────────────────────────────────
 
 class AbilityKind(str, Enum):
     SELF_HEAL = "self_heal"
@@ -125,80 +68,58 @@ class AbilityKind(str, Enum):
     TARGET_MARK = "target_mark"
 
 
-# ── EFEITO DE ABILIDADE ────────────────────────────────────────────
 
 @dataclass
 class AbilityEffect:
-    """Descrição declarativa do que uma Ability faz quando activada."""
     kind: AbilityKind
 
-    # ── SELF_HEAL ─────────────────────────────────────────────────
-    heal_dice:  str = ""   # e.g. "1d10"
-    heal_fixed: int = 0    # bónus fixo (e.g. +3) ou valor total (Lay on Hands)
+    heal_dice:  str = ""   
+    heal_fixed: int = 0   
 
-    # ── SELF_BUFF ─────────────────────────────────────────────────
-    effect_key:      str   = ""    # chave em LocalPlayer.active_effects
-    effect_label:    str   = ""    # label em LocalPlayer.status_effects
-    effect_duration: float = 0.0   # segundos; 0 = não expira sozinho (consume-on-hit)
+    effect_key:      str   = ""    
+    effect_label:    str   = ""  
+    effect_duration: float = 0.0   
 
-    # ── SELF_BUFF AC modifiers ─────────────────────────────────────
-    ac_bonus: int = 0   # bónus aditivo à AC enquanto o efeito estiver activo
-    ac_set:   int = 0   # AC mínima (e.g. Mage Armor → max(base, 13))
+    ac_bonus: int = 0   
+    ac_set:   int = 0  
 
-    # ── TARGET_DAMAGE / TARGET_DRAIN / MULTI_HIT / AOE_DAMAGE ────
-    damage_dice:  str  = ""    # e.g. "3d6"
-    damage_fixed: int  = 0     # bónus fixo ao dano
-    auto_hit:     bool = True  # attack_roll=999 → ignora AC do alvo
-    weapon_name:  str  = ""    # nome mostrado no log; usa ab.name se vazio
+    damage_dice:  str  = ""    
+    damage_fixed: int  = 0    
+    auto_hit:     bool = True  
+    weapon_name:  str  = ""    
 
-    # MULTI_HIT
     hit_count: int = 1
 
-    # AOE_DAMAGE
     aoe_radius:              int  = 0
-    use_class_damage_modifier: bool = False  # soma lp.dnd_class.damage_modifier ao dano
-    auto_hit_aoe:            bool = False    # override: force 999 no AOE (roll normal se False)
+    use_class_damage_modifier: bool = False  
+    auto_hit_aoe:            bool = False   
 
-    # ── TARGET_DRAIN ──────────────────────────────────────────────
-    drain_ratio: float = 0.5   # fracção do dano devolvida em HP
+    drain_ratio: float = 0.5  
 
-    # ── TARGET_MARK ───────────────────────────────────────────────
-    mark_effect_key: str   = ""    # chave de efeito (e.g. "hunters_mark")
-    mark_label:      str   = ""    # label visível (e.g. "Hunter's Mark")
-    mark_duration:   float = 30.0  # segundos
+    mark_effect_key: str   = "" 
+    mark_label:      str   = ""    
+    mark_duration:   float = 30.0  
 
-    # ── DISPLAY ───────────────────────────────────────────────────
     emoji: str = "✨"
 
 
-# ── MODIFICADOR ON-HIT ─────────────────────────────────────────────
 
 @dataclass
 class OnHitModifier:
-    """
-    Bónus passivo activado pelo próximo ataque enquanto o efeito estiver activo.
-
-    Exemplos:
-      Action Surge → +2d8 dano, consume=True, basic_attack_only=True
-      Hunter's Mark → +1d6 dano, consume=False, basic_attack_only=False,
-                      marked_target_only=True
-    """
     effect_key: str
 
-    damage_dice:  str  = ""    # e.g. "2d6"
-    attack_dice:  str  = ""    # e.g. "1d4" (bónus ao attack roll)
-    auto_hit:     bool = False  # força attack_roll = 999
-    twin_weapon:  bool = False  # rola o dado de arma da classe uma vez extra
+    damage_dice:  str  = ""    
+    attack_dice:  str  = ""    
+    auto_hit:     bool = False  
+    twin_weapon:  bool = False  
 
-    consume:            bool = True   # remove o efeito após activar
-    basic_attack_only:  bool = True   # False → aplica-se também a abilidades de dano
-    marked_target_only: bool = False  # só se aplica se target == local.marked_target
+    consume:            bool = True   
+    basic_attack_only:  bool = True  
+    marked_target_only: bool = False  
 
-    label:        str = ""  # texto no log, e.g. "Sneak Attack"
-    status_label: str = ""  # label a remover de status_effects quando consumido
+    label:        str = "" 
+    status_label: str = ""  
 
-
-# ── DEFINIÇÃO DE CLASSE ────────────────────────────────────────────
 
 @dataclass
 class Ability:
@@ -206,7 +127,7 @@ class Ability:
     description:  str
     cooldown_secs: int  = 0
     is_spell:     bool  = False
-    ability_range: int  = 0     # 0 = herda attack_range da classe; >0 = override
+    ability_range: int  = 0     
     effect: Optional[AbilityEffect] = field(default=None)
 
 
@@ -216,10 +137,10 @@ class DnDClass:
     hp_base: int
     armor_class_base: int
     weapon: str
-    damage_dice: str            # e.g. "3d8"
-    attack_modifier: int        # bónus ao d20 de ataque
-    damage_modifier: int        # bónus ao dado de dano
-    attack_range: int           # tiles (Chebyshev). 1 = melee, 10 = longbow, etc.
+    damage_dice: str            
+    attack_modifier: int       
+    damage_modifier: int        
+    attack_range: int          
     abilities: List[Ability] = field(default_factory=list)
     on_hit_modifiers: List[OnHitModifier] = field(default_factory=list)
 
@@ -230,10 +151,6 @@ class DnDClass:
         return max(1, roll(self.damage_dice) + self.damage_modifier)
 
     def effective_range(self, ability_name: str | None = None) -> int:
-        """
-        Devolve o alcance efectivo para um ataque normal ou para uma abilidade
-        específica (se essa abilidade tiver ability_range > 0).
-        """
         if ability_name:
             for ab in self.abilities:
                 if ab.name == ability_name and ab.ability_range > 0:
@@ -241,11 +158,8 @@ class DnDClass:
         return self.attack_range
 
 
-# ── CLASSES DISPONÍVEIS ────────────────────────────────────────────
 
 CLASSES: dict[str, DnDClass] = {
-
-    # ── FIGHTER ───────────────────────────────────────────────────
     "fighter": DnDClass(
         name="Fighter",
         hp_base=50,
@@ -282,7 +196,7 @@ CLASSES: dict[str, DnDClass] = {
                     kind=AbilityKind.SELF_BUFF,
                     effect_key="action_surge",
                     effect_label="+2d8 Surge↑",
-                    effect_duration=120.0,  # consume-on-hit; expiry é safety net
+                    effect_duration=120.0, 
                     emoji="⚔",
                 ),
             ),
@@ -301,7 +215,6 @@ CLASSES: dict[str, DnDClass] = {
         ],
     ),
 
-    # ── WIZARD ────────────────────────────────────────────────────
     "wizard": DnDClass(
         name="Wizard",
         hp_base=30,
@@ -320,7 +233,6 @@ CLASSES: dict[str, DnDClass] = {
                 ability_range=7,
                 effect=AbilityEffect(
                     kind=AbilityKind.TARGET_DAMAGE,
-                    # 3*(1d4+1) = 3d4+3
                     damage_dice="3d4", damage_fixed=3,
                     auto_hit=True,
                     weapon_name="Magic Missile",
@@ -357,7 +269,6 @@ CLASSES: dict[str, DnDClass] = {
         ],
     ),
 
-    # ── ROGUE ─────────────────────────────────────────────────────
     "rogue": DnDClass(
         name="Rogue",
         hp_base=35,
@@ -422,7 +333,6 @@ CLASSES: dict[str, DnDClass] = {
         ],
     ),
 
-    # ── CLERIC ────────────────────────────────────────────────────
     "cleric": DnDClass(
         name="Cleric",
         hp_base=45,
@@ -482,7 +392,6 @@ CLASSES: dict[str, DnDClass] = {
         ],
     ),
 
-    # ── RANGER ────────────────────────────────────────────────────
     "ranger": DnDClass(
         name="Ranger",
         hp_base=38,
@@ -496,11 +405,11 @@ CLASSES: dict[str, DnDClass] = {
             OnHitModifier(
                 effect_key="hunters_mark",
                 damage_dice="1d6",
-                consume=False,          # dura enquanto o efeito estiver activo
-                basic_attack_only=False,  # aplica-se também ao Volley
+                consume=False,          
+                basic_attack_only=False,  
                 marked_target_only=True,
                 label="Hunter's Mark",
-                status_label="",        # não se remove; expira por tempo
+                status_label="",        
             ),
         ],
         abilities=[
@@ -543,7 +452,6 @@ CLASSES: dict[str, DnDClass] = {
         ],
     ),
 
-    # ── SORCERER ──────────────────────────────────────────────────
     "sorcerer": DnDClass(
         name="Sorcerer",
         hp_base=36,
@@ -607,7 +515,6 @@ CLASSES: dict[str, DnDClass] = {
         ],
     ),
 
-    # ── PALADIN ───────────────────────────────────────────────────
     "paladin": DnDClass(
         name="Paladin",
         hp_base=52,
@@ -664,7 +571,6 @@ CLASSES: dict[str, DnDClass] = {
         ],
     ),
 
-    # ── MONK ──────────────────────────────────────────────────────
     "monk": DnDClass(
         name="Monk",
         hp_base=42,
@@ -717,9 +623,6 @@ CLASSES: dict[str, DnDClass] = {
         ],
     ),
 
-    # ── WARLOCK ───────────────────────────────────────────────────
-    # hex_mark aplica-se a TODOS os ataques contra o alvo marcado
-    # (basic_attack_only=False), incluindo Eldritch Blast e Life Drain.
     "warlock": DnDClass(
         name="Warlock",
         hp_base=32,
@@ -734,7 +637,7 @@ CLASSES: dict[str, DnDClass] = {
                 effect_key="hex_mark",
                 damage_dice="1d6",
                 consume=False,
-                basic_attack_only=False,  # aplica-se em send_attack E em abilities
+                basic_attack_only=False, 
                 marked_target_only=True,
                 label="Hex",
                 status_label="",
@@ -793,6 +696,5 @@ def get_class(name: str) -> DnDClass | None:
 
 
 def max_damage_for_class(name: str) -> int:
-    """Devolve o dano máximo teórico para uma classe pelo nome. Fallback = 50."""
     cls = get_class(name)
     return theoretical_max_damage(cls) if cls else 50

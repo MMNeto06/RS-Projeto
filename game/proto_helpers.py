@@ -1,12 +1,3 @@
-"""
-proto_helpers.py
-Helpers para construir mensagens protobuf a partir do estado local do jogo.
-
-Centralizar aqui evita duplicação da construção de PlayerState espalhada por
-game_node.py, game_servicer.py e qualquer outro módulo que precise de serializar
-estado de jogadores para gRPC.
-"""
-
 import game_pb2
 from game_state import LocalPlayer, RemotePlayer
 

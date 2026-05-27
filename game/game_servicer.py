@@ -1,8 +1,3 @@
-"""
-game/game_servicer.py
-Implementação dos métodos gRPC definidos no game.proto.
-"""
-
 import time
 import asyncio
 import json
@@ -24,17 +19,10 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         self.node  = node
 
     def _lookup_player(self, username: str) -> tuple:
-        """
-        Devolve (player_obj, is_local) para um username.
-        player_obj é LocalPlayer se is_local=True, RemotePlayer caso contrário.
-        Devolve (None, False) se o jogador não for encontrado.
-        """
         if username == self.state.local.username:
             return self.state.local, True
         player = self.state.others.get(username)
         return player, False
-
-    # -- CHAT ------------------------------------------------------
 
     async def SendMessage(self, request, context):
         ts = time.strftime("%H:%M:%S", time.localtime(request.timestamp))
@@ -42,14 +30,10 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         print("> ", end="", flush=True)
         return game_pb2.Ack(received=True, by=self.state.local.username)
 
-    # -- PING ------------------------------------------------------
-
     async def Ping(self, request, context):
         return game_pb2.PingResponse(
             username=self.state.local.username, alive=True
         )
-
-    # -- JOIN ------------------------------------------------------
 
     async def Join(self, request, context):
         self.state.log_event(
@@ -68,14 +52,10 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             )
         return game_pb2.Ack(received=True, by=self.state.local.username)
 
-    # -- LEAVE -----------------------------------------------------
-
     async def Leave(self, request, context):
         self.state.others.pop(request.username, None)
         self.state.log_event(f"\033[31m{request.username}\033[0m saiu do jogo.")
         return game_pb2.Ack(received=True, by=self.state.local.username)
-
-    # -- ATTACK ----------------------------------------------------
 
     async def Attack(self, request, context):
         local = self.state.local
@@ -86,9 +66,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                 target_hp_remaining=local.hp, target_died=False,
             )
 
-        # -- Validação de range (segunda linha de defesa) -----------
-        # O check principal acontece no atacante (game_node), mas validamos
-        # aqui também com a posição que o atacante declarou.
         if request.effective_range > 0:
             dist = chebyshev(
                 request.attacker_x, request.attacker_y,
@@ -104,7 +81,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                     target_hp_remaining=local.hp, target_died=False,
                 )
 
-        # -- Disengage — o jogador local está imune -----------------
         if local.is_effect_active("disengaged"):
             self.state.log_event(
                 f"{request.attacker} tentou atacar — \033[32mDesviaste (Disengage)!\033[0m"
@@ -114,8 +90,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
                 target_hp_remaining=local.hp, target_died=False,
             )
 
-        # attack_roll=999 significa auto-acerto (Magic Missile, Sacred Flame, Cheap Shot)
-        # Ray of Frost do Wizard usa o roll normal (attack_modifier=4, range=4)
         hit = (request.attack_roll == 999) or (request.attack_roll >= local.armor_class)
 
         damage = 0
@@ -156,14 +130,14 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         await self.node.broadcast_state()
 
     async def _respawn_remote(self, username: str, seconds: int = 3):
-        await asyncio.sleep(seconds) #wait for n seconds to fulfill the respawn cooldown
+        await asyncio.sleep(seconds) 
         
-        target = next((p for p in self.state.others.values() #get the player
+        target = next((p for p in self.state.others.values()
                        if p.username.lower() == username.lower()), None)
         if not target:
             return
         
-        x, y = self.state.random_spawn() #respawn logic
+        x, y = self.state.random_spawn() 
         target.hp = target.max_hp
         target.alive = True
         target.x, target.y = x, y
@@ -172,7 +146,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         ps = remote_player_to_proto(target, self.state.match_id)
 
-        # broadcast update
         tasks = []
         seen = set()
         for nid, p in self.node.peers.items():
@@ -193,8 +166,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    # -- STATE UPDATE ----------------------------------------------
-
     async def StateUpdate(self, request, context):
         peer = context.peer() 
         
@@ -210,7 +181,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         self.state.update_remote(request)
         return game_pb2.Ack(received=True, by=self.state.local.username)
     
-    # -- BROADCAST EVENT -------------------------------------------
 
     async def BroadcastEvent(self, request, context):
         if request.type == GameEvent.PLAYER_DIED:
@@ -240,10 +210,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         return game_pb2.Ack(received=True, by=self.state.local.username)
     
-    
-
-    # -- VALIDATE ATTACK -------------------------------------------
-
     async def ValidateAttack(self, request, context):
         if not self.node.lobby.is_host:
             return game_pb2.ValidateAttackResponse(approved=True, reason="not host")
@@ -277,24 +243,19 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
     
     def _verify_sender_ip(self, context, username: str) -> bool:
         peer = context.peer()  
-        print(f"[DEBUG] _verify_sender_ip: peer={peer}, username={username}")
 
         if not peer.startswith("ipv4:"):
-            print(f"[DEBUG] não é ipv4, a deixar passar") 
-            # NOTA: dantes eu metia false aqui, vê se resulta com true
-            return True
+            return False
 
         peer_ip = peer.split(":")[1]
         if peer_ip == "127.0.0.1":
             return True
 
         expected_addr = self._addr_for_username(username)
-        print(f"[DEBUG] peer_ip={peer_ip}, expected_addr={expected_addr}")
         
         expected_ip = expected_addr.split(":")[0] if expected_addr else None
         result = peer_ip == expected_ip
         
-        print(f"[DEBUG] resultado: {result}")
         return result
 
     async def HostAttack(self, request, context):
@@ -321,9 +282,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             return game_pb2.MoveResult(applied=False)
 
         return await self.resolve_move(request, context)
-
-    
-    # -- LOBBY NOTIFY ----------------------------------------------
 
     async def LobbyNotify(self, request, context):
         Type = game_pb2.LobbyNotification.Type
@@ -411,7 +369,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         if not attacker.alive or not target.alive:
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=0, target_died=False)
 
-        # Validate the attack
         approved, reason = node.lobby.validate_attack(
             attacker_class=request.attacker_class,
             damage=request.base_damage_roll,
@@ -429,7 +386,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=current_hp, target_died=False)
 
 
-        #check if attack is in range
         if attackerIsHost:
             ax, ay = state.local.x, state.local.y
         else:
@@ -449,7 +405,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             return game_pb2.AttackResult(hit=False, damage_dealt=0, target_hp_remaining=current_hp, target_died=False)
 
 
-        # Calc hit
         if(targetIsHost):
             target_ac = state.local.armor_class
         else:
@@ -461,7 +416,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         else:
             dmg = 0
             
-        #apply the damage
         died = False
         if hit:
             if targetIsHost:
@@ -481,7 +435,6 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
             else:
                 attacker.kills += (1 if died else 0)
                 
-            # If player who isnt the host died, respawn them
             if died and not targetIsHost:
                 try:
                     asyncio.create_task(self._respawn_remote(target.username, 3))
@@ -490,18 +443,16 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         else:
             remaining = state.local.hp if targetIsHost else target.hp
 
-        # create the target playerstate for broadcast
         if targetIsHost:
             ps_target = local_player_to_proto(state.local, state.match_id)
         else:
             ps_target = remote_player_to_proto(target, state.match_id)
 
-        # Broadcast target state
         self.state.log_event("attack resolved by host and will be broadcast")
         tasks = []
         snapshot = self.node.peers.items()
-        for nid, p in snapshot: #broadcast to each peer in lobby
-            if nid == self.node.node_id: # skip self
+        for nid, p in snapshot: 
+            if nid == self.node.node_id:
                 continue
             addr = p.get("grpc_addr")
             if not addr:
@@ -534,15 +485,13 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
         new_x = int(getattr(request, 'x', -1)) #-1 if it cant get the coord
         new_y = int(getattr(request, 'y', -1))
 
-        # Bounds check
         if not (0 <= new_x < game_state.MAP_W and 0 <= new_y < game_state.MAP_H):
             return game_pb2.MoveResult(applied=False)
 
-        # Can't move if dead
         if not user.alive:
             return game_pb2.MoveResult(applied=False)
 
-        if userIsHost: #apply locally
+        if userIsHost: 
             state.local.x, state.local.y = new_x, new_y
             ps = local_player_to_proto(state.local, state.match_id)
         else:
@@ -551,8 +500,8 @@ class GameServicer(game_pb2_grpc.GameServiceServicer):
 
         tasks = []
         snapshot = self.node.peers.items()
-        for nid, p in snapshot: #broadcast to each peer in lobby
-            if nid == self.node.node_id: # skip self
+        for nid, p in snapshot: 
+            if nid == self.node.node_id:
                 continue
             addr = p.get("grpc_addr")
             if not addr:
